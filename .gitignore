@@ -47,9 +47,15 @@ models/
 # Per-session pipeline state (composition, hums, automation logs)
 sessions/
 
+# Last session from 1_setup.py (local)
+.active_session
+
 # Rendered / exported audio (final_generator output)
 exports/
 output/
+
+# Downloaded SoundFont (see assets/soundfonts/README.md)
+assets/soundfonts/*.sf2
 
 # Local dependency vendoring
 vendor/

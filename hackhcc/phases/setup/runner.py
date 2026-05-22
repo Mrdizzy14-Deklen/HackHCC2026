@@ -11,8 +11,13 @@ from hackhcc.composition import (
     try_mark_setup_complete,
 )
 from hackhcc.phases.setup.hum import run_hum_capture
-from hackhcc.phases.setup.intent import apply_intent, apply_intent_from_elevenlabs
+from hackhcc.phases.setup.intent import (
+    apply_intent,
+    apply_intent_from_elevenlabs,
+    run_intent_cli,
+)
 from hackhcc.phases.setup.pitch import run_pitch_detection
+from hackhcc.phases.setup.render import run_render_stems
 from hackhcc.phases.setup.voice_ui import run_voice_setup_intent
 
 
@@ -32,8 +37,10 @@ def run_hum_and_pitch(
     session_id: str,
     *,
     hum_seconds: float = 5.0,
+    render_stems: bool = True,
+    use_musicgen: bool = False,
 ) -> Composition:
-    """Setup steps 2–3: record hums → detect pitch → gate."""
+    """Setup: hums → pitch → render stems → gate."""
     print("\n--- Hum capture ---")
     run_hum_capture(session_id, seconds=hum_seconds)
     print("\n--- Pitch detection ---")
@@ -44,11 +51,18 @@ def run_hum_and_pitch(
         raise RuntimeError(
             "Setup gates failed after hum/pitch:\n  - " + "\n  - ".join(errors)
         )
+
+    if render_stems:
+        run_render_stems(session_id, use_musicgen=use_musicgen)
+
     comp = try_mark_setup_complete(session_id)
     print("\nSetup complete — conduct unlocked.")
     print(f"  Key: {comp.key}  BPM: {comp.bpm}  Mood: {comp.mood}")
     for t in comp.tracks:
-        print(f"  {t.id}: {len(t.notes)} notes, hum={t.hum_path}")
+        stem = t.stem_path or "(none)"
+        print(
+            f"  {t.id}: {len(t.notes)} notes, hum={t.hum_path}, stem={stem}"
+        )
     return comp
 
 
@@ -57,6 +71,8 @@ def run_setup_elevenlabs(
     *,
     hum_seconds: float = 5.0,
     use_voice_ui: bool = True,
+    render_stems: bool = True,
+    use_musicgen: bool = False,
 ) -> Composition:
     """
     Full ElevenLabs setup: intent (voice UI or headless STT) → hum → pitch.
@@ -70,7 +86,12 @@ def run_setup_elevenlabs(
     else:
         apply_intent_from_elevenlabs(sid)
 
-    return run_hum_and_pitch(sid, hum_seconds=hum_seconds)
+    return run_hum_and_pitch(
+        sid,
+        hum_seconds=hum_seconds,
+        render_stems=render_stems,
+        use_musicgen=use_musicgen,
+    )
 
 
 def run_setup(
@@ -82,6 +103,9 @@ def run_setup(
     skip_intent: bool = False,
     interactive_intent: bool = True,
     voice_intent: bool = False,
+    text_intent: bool = False,
+    render_stems: bool = True,
+    use_musicgen: bool = False,
 ) -> Composition:
     """
     Full setup pipeline:
@@ -102,6 +126,8 @@ def run_setup(
         )
     elif voice_intent:
         run_voice_setup_intent(sid)
+    elif text_intent:
+        run_intent_cli(sid)
     elif interactive_intent:
         apply_intent_from_elevenlabs(sid)
     else:
@@ -113,7 +139,12 @@ def run_setup(
                 instruments=instruments or ["synth", "bass"],
             )
 
-    return run_hum_and_pitch(sid, hum_seconds=hum_seconds)
+    return run_hum_and_pitch(
+        sid,
+        hum_seconds=hum_seconds,
+        render_stems=render_stems,
+        use_musicgen=use_musicgen,
+    )
 
 
 def run_setup_stub(session_id: str | None = None, *, mood: str = "upbeat") -> Composition:

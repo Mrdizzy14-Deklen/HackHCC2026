@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import time
+
+from hackhcc.env import load_project_env
+
+load_project_env()
 from collections.abc import Callable
 
 from hackhcc.stt.listener import SpeechListener, TranscriptUpdate
