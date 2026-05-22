@@ -1,0 +1,11 @@
+Model Information:
+* title:	Basic Flute
+* source:	https://sketchfab.com/3d-models/basic-flute-8eb90edf4b6a44e8a400bfd565b37483
+* author:	Tealfox64 (https://sketchfab.com/tealfox64)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Basic Flute" (https://sketchfab.com/3d-models/basic-flute-8eb90edf4b6a44e8a400bfd565b37483) by Tealfox64 (https://sketchfab.com/tealfox64) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
