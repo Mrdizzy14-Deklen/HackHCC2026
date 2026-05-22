@@ -1,0 +1,11 @@
+Model Information:
+* title:	Trumpet
+* source:	https://sketchfab.com/3d-models/trumpet-be92edf0f81b4c8ea27ef110b4eaa04f
+* author:	Janice Emmons 1990-present (https://sketchfab.com/JaniceEmmons1990)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Trumpet" (https://sketchfab.com/3d-models/trumpet-be92edf0f81b4c8ea27ef110b4eaa04f) by Janice Emmons 1990-present (https://sketchfab.com/JaniceEmmons1990) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
