@@ -1,13 +1,9 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-// --- TWEAK: We don't need RoomEnvironment for stage lighting, so we can drop it. ---
-// import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x111111); // Darken background
+scene.background = new THREE.Color(0x111111);
 
-// --- NEW: Stage Haze (Fog) ---
 scene.fog = new THREE.Fog(0x111111, 5, 25);
 
 const camera = new THREE.PerspectiveCamera(
@@ -17,21 +13,44 @@ const camera = new THREE.PerspectiveCamera(
   1000,
 );
 
-// Example: Trumpet points forward, but maybe needs to be tilted up 15 degrees to look like it's being played
+// --- INSTRUMENT ROTATIONS ---
 const TRUMPET_ROT = new THREE.Euler(
-  THREE.MathUtils.degToRad(15),  // X: Tilt up/down
-  THREE.MathUtils.degToRad(-90), // Y: Spin left/right (your original BELL_FIX)
-  THREE.MathUtils.degToRad(0)    // Z: Roll (barrel roll)
+  THREE.MathUtils.degToRad(15), 
+  THREE.MathUtils.degToRad(-75),
+  THREE.MathUtils.degToRad(0)
 );
 
-// Example: Flutes are held sideways, so you usually have to rotate them heavily on the Z or X axis depending on the model
 const FLUTE_ROT = new THREE.Euler(
   THREE.MathUtils.degToRad(10),
-  THREE.MathUtils.degToRad(0),
-  THREE.MathUtils.degToRad(100) // Roll it horizontal
+  THREE.MathUtils.degToRad(-35),
+  THREE.MathUtils.degToRad(0) 
 );
 
-camera.position.set(0, 3.5, 10); // --- TWEAK: Raised slightly to see tiers better ---
+const VIOLIN_ROT = new THREE.Euler(
+  THREE.MathUtils.degToRad(0),
+  THREE.MathUtils.degToRad(0),
+  THREE.MathUtils.degToRad(-20) 
+);
+
+const OBOE_ROT = new THREE.Euler(
+  THREE.MathUtils.degToRad(45), 
+  THREE.MathUtils.degToRad(0),
+  THREE.MathUtils.degToRad(0)
+);
+
+const FRENCH_HORN_ROT = new THREE.Euler(
+  THREE.MathUtils.degToRad(0),
+  THREE.MathUtils.degToRad(-90), 
+  THREE.MathUtils.degToRad(0)
+);
+
+const TROMBONE_ROT = new THREE.Euler(
+  THREE.MathUtils.degToRad(10), 
+  THREE.MathUtils.degToRad(-15),
+  THREE.MathUtils.degToRad(0)
+);
+
+camera.position.set(0, 3.5, 10);
 camera.lookAt(0, 0.55, -2);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -39,21 +58,15 @@ renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.8; // --- TWEAK: Lowered exposure ---
+renderer.toneMappingExposure = 0.8;
 
-// --- NEW: Enable global shadow mapping ---
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
-// --- TWEAK: Removed PMREM generator since it floods the scene with white light ---
-// const pmrem = new THREE.PMREMGenerator(renderer);
-// scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.add(new THREE.AmbientLight(0xffffff, 0.2));
 
-// --- TWEAK: Dimmed base lighting to allow spotlights to stand out ---
-scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-
-const keyLight = new THREE.DirectionalLight(0xffffff, 5);
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
 keyLight.position.set(3, 5, 4);
 scene.add(keyLight);
 
@@ -61,8 +74,8 @@ const fillLight = new THREE.DirectionalLight(0xffffff, 0.1);
 fillLight.position.set(-3, 2, -2);
 scene.add(fillLight);
 
-// --- NEW: Spotlight Helper Function ---
-function createStageSpotlight(color, intensity, pos, targetPos) {
+// The 4 main washes DO cast shadows
+function createStageWash(color, intensity, pos, targetPos) {
   const light = new THREE.SpotLight(color, intensity);
   light.position.set(pos.x, pos.y, pos.z);
   
@@ -86,21 +99,13 @@ function createStageSpotlight(color, intensity, pos, targetPos) {
   return light;
 }
 
-// 1. Warm Front Wash (Main illumination, light amber)
-createStageSpotlight(0xffe5b4, 40, { x: 0, y: 8, z: 5 }, { x: 0, y: 0, z: -2 });
-
-// 2. Cool Backlight (Adds depth/rim light, cyan/blue)
-createStageSpotlight(0x87ceeb, 25, { x: 0, y: 8, z: -8 }, { x: 0, y: 0, z: 0 });
-
-// 3. Side Wash Left (Slightly Magenta/Red)
-createStageSpotlight(0xffb6c1, 15, { x: -8, y: 5, z: 0 }, { x: -3, y: 0, z: -2 });
-
-// 4. Side Wash Right (Slightly Cyan/Green)
-createStageSpotlight(0x00ffff, 15, { x: 8, y: 5, z: 0 }, { x: 3, y: 0, z: -2 });
+createStageWash(0xffe5b4, 40, { x: 0, y: 8, z: 5 }, { x: 0, y: 0, z: -2 });
+createStageWash(0x87ceeb, 25, { x: 0, y: 8, z: -8 }, { x: 0, y: 0, z: 0 });
+createStageWash(0xffb6c1, 15, { x: -8, y: 5, z: 0 }, { x: -3, y: 0, z: -2 });
+createStageWash(0x00ffff, 15, { x: 8, y: 5, z: 0 }, { x: 3, y: 0, z: -2 });
 
 const VIEWER = new THREE.Vector3(0, 1, 4);
 
-// Orchestra tiers: front (near camera, higher z) = low; back = raised steps.
 const ORCHESTRA_TIERS = [
   { zMin: -1.0, zMax: 0.9, y: 0.0 },
   { zMin: -2.6, zMax: -1.0, y: 0.24 },
@@ -121,66 +126,42 @@ function buildOrchestraRisers() {
   const group = new THREE.Group();
   const stageW = 10;
   
-  // --- TWEAK: Darkened materials so spotlights look better ---
-  const wood = new THREE.MeshStandardMaterial({
-    color: 0x2d241c,
-    roughness: 0.82,
-    metalness: 0.04,
-  });
-  const lipMat = new THREE.MeshStandardMaterial({
-    color: 0x1a130c,
-    roughness: 0.9,
-    metalness: 0.02,
-  });
-  const skirtMat = new THREE.MeshStandardMaterial({
-    color: 0x0f0a06,
-    roughness: 0.95,
-  });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x2d241c, roughness: 0.82, metalness: 0.04 });
+  const lipMat = new THREE.MeshStandardMaterial({ color: 0x1a130c, roughness: 0.9, metalness: 0.02 });
+  const skirtMat = new THREE.MeshStandardMaterial({ color: 0x0f0a06, roughness: 0.95 });
 
   for (const tier of ORCHESTRA_TIERS) {
     const depth = tier.zMax - tier.zMin;
     const centerZ = (tier.zMax + tier.zMin) / 2;
     const topY = tier.y + PLATFORM_THICKNESS / 2;
 
-    const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(stageW, PLATFORM_THICKNESS, depth),
-      wood,
-    );
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(stageW, PLATFORM_THICKNESS, depth), wood);
     deck.position.set(0, topY, centerZ);
-    deck.castShadow = true; // NEW
-    deck.receiveShadow = true; // NEW
+    deck.castShadow = true; 
+    deck.receiveShadow = true; 
     group.add(deck);
 
-    // Front edge lip (visible "step" face toward audience)
     const lip = new THREE.Mesh(new THREE.BoxGeometry(stageW, 0.14, 0.08), lipMat);
     lip.position.set(0, tier.y + 0.05, tier.zMax + 0.02);
-    lip.castShadow = true; // NEW
-    lip.receiveShadow = true; // NEW
+    lip.castShadow = true; 
+    lip.receiveShadow = true; 
     group.add(lip);
 
-    // Vertical riser face under the step (except front row)
     if (tier.y > 0) {
       const rise = tier.y;
-      const skirt = new THREE.Mesh(
-        new THREE.BoxGeometry(stageW, rise, 0.12),
-        skirtMat,
-      );
+      const skirt = new THREE.Mesh(new THREE.BoxGeometry(stageW, rise, 0.12), skirtMat);
       skirt.position.set(0, rise / 2, tier.zMax + 0.06);
-      skirt.castShadow = true; // NEW
-      skirt.receiveShadow = true; // NEW
+      skirt.castShadow = true; 
+      skirt.receiveShadow = true; 
       group.add(skirt);
     }
   }
 
-  // Side wing ramps (visual cue that sections sit on stands)
   for (const side of [-1, 1]) {
-    const ramp = new THREE.Mesh(
-      new THREE.BoxGeometry(0.35, 0.5, 5.5),
-      skirtMat,
-    );
+    const ramp = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.5, 5.5), skirtMat);
     ramp.position.set(side * (stageW / 2 - 0.2), 0.25, -2.5);
     ramp.rotation.y = side * 0.08;
-    ramp.receiveShadow = true; // NEW
+    ramp.receiveShadow = true; 
     group.add(ramp);
   }
 
@@ -190,21 +171,43 @@ function buildOrchestraRisers() {
 
 buildOrchestraRisers();
 
-// Tweak if bell points wrong way after first load. Model's bell axis
-// rarely matches Three.js convention (-Z forward).
-const BELL_FIX = new THREE.Euler(0, -Math.PI / 2, 0);
+// --- NEW: Pre-spawn logic for performance ---
+function createInstrumentSpotlight(x, y, z) {
+  const instrumentY = getTierY(z) + (PLATFORM_THICKNESS / 2) + y;
+  const light = new THREE.SpotLight(0xffffff, 0); // Intensity 0 (Off by default)
+  light.position.set(x, instrumentY + 4, z + 1);
+  light.angle = Math.PI / 8; // Slightly wider to ensure coverage
+  light.penumbra = 0.5;
+  light.decay = 2;
+  light.distance = 15;
+  
+  // CRITICAL PERFORMANCE FIX: Individual spots don't cast shadows, 
+  // preventing extreme lag while keeping the spotlight visual effect.
+  light.castShadow = false; 
 
+  const target = new THREE.Object3D();
+  target.position.set(x, instrumentY, z);
+  scene.add(target);
+  light.target = target;
+  
+  scene.add(light);
+  return light;
+}
+
+// Helper to pre-spawn lights for an array of coordinates
+function initSlotsWithLights(coords) {
+  return coords.map(pos => ({
+    pos: pos,
+    light: createInstrumentSpotlight(pos[0], pos[1], pos[2])
+  }));
+}
+
+const BELL_FIX = new THREE.Euler(0, -Math.PI / 2, 0);
 const instruments = [];
 
 function placeInstrument(
-  model,
-  x,
-  z,
-  yawDeg = 0,
-  modelRotation = BELL_FIX,
-  sizeTarget = 1.2
+  model, x, y, z, yawDeg = 0, modelRotation = BELL_FIX, sizeTarget = 1.2, spotLight = null
 ) {
-  // --- NEW: Tell the loaded 3D model to cast and receive shadows ---
   model.traverse((child) => {
     if (child.isMesh) {
       child.castShadow = true;
@@ -229,141 +232,162 @@ function placeInstrument(
   const outer = new THREE.Group();
   outer.add(inner);
   
-  // Get the step height, add platform thickness, and add a float offset
-  const FLOAT_OFFSET = 0.4; // Adjust this to make them float higher or lower
-  const instrumentY = getTierY(z) + (PLATFORM_THICKNESS / 2) + FLOAT_OFFSET;
-  
+  const instrumentY = getTierY(z) + (PLATFORM_THICKNESS / 2) + y;
   outer.position.set(x, instrumentY, z);
   
   scene.add(outer);
+
+  // Turn on the pre-spawned light and make it STRONGER
+  if (spotLight) {
+    spotLight.target = outer;
+    spotLight.intensity = 200; // Super bright
+  }
 
   instruments.push({ outer, inner, baseYaw, targetYaw: baseYaw, currentYaw: baseYaw });
   return outer;
 }
 
-// --- TRUMPETS ---
-// Spreading them out across the left side (-X) and different tier depths (-Z)
-const TRUMPET_SLOTS = [
-  [-1.5, 0.2], [-3.0, 0.2], [-4.5, 0.2],    // Tier 0
-  [-2.0, -1.8], [-3.5, -1.8],               // Tier 1
-  [-1.5, -3.4], [-3.0, -3.4], [-4.5, -3.4], // Tier 2
-  [-2.0, -5.0], [-3.5, -5.0]                // Tier 3
-];
-const MAX_TRUMPETS = TRUMPET_SLOTS.length;
-const trumpetCache = { scene: null, count: 0, pending: 0 };
-
-function addTrumpet() {
-  // Cap the total number of trumpets
-  if (trumpetCache.count + trumpetCache.pending >= MAX_TRUMPETS) return;
-
-  if (!trumpetCache.scene) {
-    trumpetCache.pending++;
-    return;
-  }
-  
-  const slot = TRUMPET_SLOTS[trumpetCache.count];
-  placeInstrument(
-    trumpetCache.scene.clone(true),
-    slot[0],
-    slot[1],
-    20,
-    TRUMPET_ROT
-  );
-  trumpetCache.count++;
-}
-
 const loader = new GLTFLoader();
-loader.load(
-  "/static/trumpet/scene.gltf",
-  (gltf) => {
-    trumpetCache.scene = gltf.scene;
-    while (trumpetCache.pending > 0 && trumpetCache.count < MAX_TRUMPETS) {
-      trumpetCache.pending--;
-      addTrumpet();
-    }
-    console.log("trumpet ready");
-  },
-  undefined,
-  (err) => console.error("trumpet load failed", err),
-);
 
-// --- FLUTES ---
-// Spreading them out across the right side (+X) and different tier depths (-Z)
-const FLUTE_SLOTS = [
-  [1.5, 0.2], [3.0, 0.2], [4.5, 0.2],       // Tier 0
-  [2.0, -1.8], [3.5, -1.8],                 // Tier 1
-  [1.5, -3.4], [3.0, -3.4], [4.5, -3.4],    // Tier 2
-  [2.0, -5.0], [3.5, -5.0]                  // Tier 3
-];
-const MAX_FLUTES = FLUTE_SLOTS.length;
+// --- VIOLINS (Tier 0 & 1 Left) ---
+const VIOLIN_SLOTS = initSlotsWithLights([
+  [-1.5, 0.4, 0.2], [-3.0, 0.4, 0.2], [-4.5, 0.4, 0.2], 
+  [-2.0, 0.4, -1.8], [-3.5, 0.4, -1.8]                  
+]);
+const violinCache = { scene: null, count: 0, pending: 0 };
+function addViolin() {
+  if (violinCache.count + violinCache.pending >= VIOLIN_SLOTS.length) return;
+  if (!violinCache.scene) { violinCache.pending++; return; }
+  const slot = VIOLIN_SLOTS[violinCache.count];
+  // Note: we pass 1.2 for sizeTarget, then slot.light
+  placeInstrument(violinCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 30, VIOLIN_ROT, 1.2, slot.light);
+  violinCache.count++;
+}
+loader.load("/static/violin/scene.gltf", (gltf) => {
+  violinCache.scene = gltf.scene;
+  while (violinCache.pending > 0 && violinCache.count < VIOLIN_SLOTS.length) { violinCache.pending--; addViolin(); }
+}, undefined, (err) => console.error("violin load failed", err));
+
+
+// --- FLUTES (Tier 0 Right) ---
+const FLUTE_SLOTS = initSlotsWithLights([
+  [1.5, 0.4, 0.2], [3.0, 0.4, 0.2], [4.5, 0.4, 0.2] 
+]);
 const fluteCache = { scene: null, count: 0, pending: 0 };
-
 function addFlute() {
-  // Cap the total number of flutes
-  if (fluteCache.count + fluteCache.pending >= MAX_FLUTES) return;
-
-  if (!fluteCache.scene) {
-    fluteCache.pending++;
-    return;
-  }
-  
+  if (fluteCache.count + fluteCache.pending >= FLUTE_SLOTS.length) return;
+  if (!fluteCache.scene) { fluteCache.pending++; return; }
   const slot = FLUTE_SLOTS[fluteCache.count];
-  placeInstrument(
-    fluteCache.scene.clone(true),
-    slot[0],
-    slot[1],
-    -20,
-    FLUTE_ROT
-  );
+  placeInstrument(fluteCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -30, FLUTE_ROT, 1.2, slot.light);
   fluteCache.count++;
 }
+loader.load("/static/basic_flute/scene.gltf", (gltf) => {
+  fluteCache.scene = gltf.scene;
+  while (fluteCache.pending > 0 && fluteCache.count < FLUTE_SLOTS.length) { fluteCache.pending--; addFlute(); }
+}, undefined, (err) => console.error("flute load failed", err));
 
-loader.load(
-  "/static/basic_flute/scene.gltf",
-  (gltf) => {
-    fluteCache.scene = gltf.scene;
-    while (fluteCache.pending > 0 && fluteCache.count < MAX_FLUTES) {
-      fluteCache.pending--;
-      addFlute();
-    }
-    console.log("flute ready");
-  },
-  undefined,
-  (err) => console.error("flute load failed", err),
-);
 
+// --- OBOES (Tier 1 Right) ---
+const OBOE_SLOTS = initSlotsWithLights([
+  [2.0, 0.4, -1.8], [3.5, 0.4, -1.8] 
+]);
+const oboeCache = { scene: null, count: 0, pending: 0 };
+function addOboe() {
+  if (oboeCache.count + oboeCache.pending >= OBOE_SLOTS.length) return;
+  if (!oboeCache.scene) { oboeCache.pending++; return; }
+  const slot = OBOE_SLOTS[oboeCache.count];
+  placeInstrument(oboeCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -20, OBOE_ROT, 1.2, slot.light);
+  oboeCache.count++;
+}
+loader.load("/static/oboe/scene.gltf", (gltf) => {
+  oboeCache.scene = gltf.scene;
+  while (oboeCache.pending > 0 && oboeCache.count < OBOE_SLOTS.length) { oboeCache.pending--; addOboe(); }
+}, undefined, (err) => console.error("oboe load failed", err));
+
+
+// --- FRENCH HORNS (Tier 2 Left) ---
+const HORN_SLOTS = initSlotsWithLights([
+  [-1.5, 0.4, -3.4], [-3.0, 0.4, -3.4], [-4.5, 0.4, -3.4] 
+]);
+const hornCache = { scene: null, count: 0, pending: 0 };
+function addFrenchHorn() {
+  if (hornCache.count + hornCache.pending >= HORN_SLOTS.length) return;
+  if (!hornCache.scene) { hornCache.pending++; return; }
+  const slot = HORN_SLOTS[hornCache.count];
+  placeInstrument(hornCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 25, FRENCH_HORN_ROT, 1.2, slot.light);
+  hornCache.count++;
+}
+loader.load("/static/french_horn/scene.gltf", (gltf) => {
+  hornCache.scene = gltf.scene;
+  while (hornCache.pending > 0 && hornCache.count < HORN_SLOTS.length) { hornCache.pending--; addFrenchHorn(); }
+}, undefined, (err) => console.error("french horn load failed", err));
+
+
+// --- TRUMPETS (Tier 2 Right) ---
+const TRUMPET_SLOTS = initSlotsWithLights([
+  [1.5, 0.4, -3.4], [3.0, 0.4, -3.4], [4.5, 0.4, -3.4] 
+]);
+const trumpetCache = { scene: null, count: 0, pending: 0 };
+function addTrumpet() {
+  if (trumpetCache.count + trumpetCache.pending >= TRUMPET_SLOTS.length) return;
+  if (!trumpetCache.scene) { trumpetCache.pending++; return; }
+  const slot = TRUMPET_SLOTS[trumpetCache.count];
+  placeInstrument(trumpetCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -25, TRUMPET_ROT, 1.2, slot.light);
+  trumpetCache.count++;
+}
+loader.load("/static/trumpet/scene.gltf", (gltf) => {
+  trumpetCache.scene = gltf.scene;
+  while (trumpetCache.pending > 0 && trumpetCache.count < TRUMPET_SLOTS.length) { trumpetCache.pending--; addTrumpet(); }
+}, undefined, (err) => console.error("trumpet load failed", err));
+
+
+// --- TROMBONES (Tier 3 Flanking Piano) ---
+const TROMBONE_SLOTS = initSlotsWithLights([
+  [-2.0, 0.4, -5.0], [-3.5, 0.4, -5.0], 
+  [2.0, 0.4, -5.0], [3.5, 0.4, -5.0]    
+]);
+const tromboneCache = { scene: null, count: 0, pending: 0 };
+function addTrombone() {
+  if (tromboneCache.count + tromboneCache.pending >= TROMBONE_SLOTS.length) return;
+  if (!tromboneCache.scene) { tromboneCache.pending++; return; }
+  const slot = TROMBONE_SLOTS[tromboneCache.count];
+  const yaw = slot.pos[0] < 0 ? 15 : -15; 
+  placeInstrument(tromboneCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], yaw, TROMBONE_ROT, 1.2, slot.light);
+  tromboneCache.count++;
+}
+loader.load("/static/trombone/scene.gltf", (gltf) => {
+  tromboneCache.scene = gltf.scene;
+  while (tromboneCache.pending > 0 && tromboneCache.count < TROMBONE_SLOTS.length) { tromboneCache.pending--; addTrombone(); }
+}, undefined, (err) => console.error("trombone load failed", err));
+
+
+// --- PIANO (Tier 3 Center) ---
 const PIANO_ROT = new THREE.Euler(0, 0, 0);
+const pianoLight = createInstrumentSpotlight(0, 0.8, -4.5); // Pre-spawn piano light
 const pianoCache = { scene: null, placed: false, pending: false };
 
 function addPiano() {
   if (pianoCache.placed) return;
-  if (!pianoCache.scene) {
-    pianoCache.pending = true;
-    return;
-  }
-  placeInstrument(pianoCache.scene.clone(true), 0, -4.5, 0, PIANO_ROT, 2.0);
+  if (!pianoCache.scene) { pianoCache.pending = true; return; }
+  placeInstrument(pianoCache.scene.clone(true), 0, 0.8, -4.5, 5, PIANO_ROT, 2.0, pianoLight);
   pianoCache.placed = true;
 }
+loader.load("/static/yamaha_m1a_piano/scene.gltf", (gltf) => {
+  pianoCache.scene = gltf.scene;
+  if (pianoCache.pending) { pianoCache.pending = false; addPiano(); }
+}, undefined, (err) => console.error("piano load failed", err));
 
-loader.load(
-  "/static/yamaha_m1a_piano/scene.gltf",
-  (gltf) => {
-    pianoCache.scene = gltf.scene;
-    if (pianoCache.pending) {
-      pianoCache.pending = false;
-      addPiano();
-    }
-    console.log("piano ready");
-  },
-  undefined,
-  (err) => console.error("piano load failed", err),
-);
 
+// --- EVENT LISTENER ---
 window.addEventListener("instrument:add", (e) => {
   const kind = (e.detail?.kind ?? "trumpet").toLowerCase();
   if (kind === "trumpet") addTrumpet();
   else if (kind === "piano") addPiano();
   else if (kind === "flute") addFlute();
+  else if (kind === "violin") addViolin();
+  else if (kind === "obo soprano" || kind === "oboe") addOboe();
+  else if (kind === "french horn" || kind === "french_horn") addFrenchHorn();
+  else if (kind === "trombone") addTrombone();
 });
 
 const raycaster = new THREE.Raycaster();
@@ -407,5 +431,4 @@ animate();
 
 fetch("/api/ping")
   .then((r) => r.json())
-  .then((data) => console.log("ping", data.status))
   .catch((err) => console.error("ping failed", err));
