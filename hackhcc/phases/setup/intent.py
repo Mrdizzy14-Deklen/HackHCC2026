@@ -1,4 +1,4 @@
-"""Intent agent — mood + tracks (CLI now; ElevenLabs STT via teammate)."""
+"""Intent agent — mood + tracks (CLI, transcript text, or ElevenLabs STT)."""
 
 from __future__ import annotations
 
@@ -85,8 +85,9 @@ def parse_transcript(text: str) -> tuple[str, list[str]]:
 
     instruments: list[str] = []
     for key in _INSTRUMENT_KEYWORDS:
-        if key in lower:
-            instruments.append(key)
+        if re.search(rf"\b{re.escape(key)}\b", lower):
+            if key not in instruments:
+                instruments.append(key)
 
     if "add " in lower:
         for key in _INSTRUMENT_KEYWORDS:
@@ -143,6 +144,7 @@ def apply_intent_from_transcript(
     *,
     source: str = "elevenlabs",
 ) -> Composition:
+    """Parse spoken/text setup and write mood + tracks[] (intent agent)."""
     mood, instruments = parse_transcript(transcript)
     if not mood:
         mood = "neutral"
@@ -157,6 +159,32 @@ def apply_intent_from_transcript(
     )
 
 
+def apply_intent_from_elevenlabs(session_id: str) -> Composition:
+    """
+    ElevenLabs STT → parse transcript → apply_intent (mood + tracks[]).
+    """
+    from hackhcc.stt.prompts import voice_input
+
+    print("\n--- Intent (voice) ---")
+    transcript = voice_input(
+        "Describe your song: mood (upbeat, chill…) and instruments "
+        "(trumpet, bass, piano…).",
+        done_phrases=("done", "next", "finished"),
+    )
+    comp = apply_intent_from_transcript(
+        session_id, transcript, source="elevenlabs"
+    )
+    print(
+        f"Intent saved: mood={comp.mood} tracks="
+        f"{[f'{t.id}({t.instrument})' for t in comp.tracks]}"
+    )
+    return comp
+
+
+# Re-export for backward compatibility
+from hackhcc.stt.prompts import listen_elevenlabs_transcript  # noqa: E402
+
+
 def _write_intent_sidecar(comp: Composition) -> None:
     sidecar = {
         "mood": comp.mood,
@@ -169,22 +197,5 @@ def _write_intent_sidecar(comp: Composition) -> None:
 
 
 def run_intent_interactive(session_id: str) -> Composition:
-    print("\n--- Setup: intent (voice/text) ---")
-    print("Enter mood (e.g. upbeat, chill) or press Enter for 'upbeat':")
-    mood = input("> ").strip() or "upbeat"
-
-    print("Instruments, comma-separated (e.g. trumpet,bass) or Enter for melody+bass:")
-    raw = input("> ").strip()
-    if raw:
-        instruments = [s.strip() for s in raw.split(",") if s.strip()]
-    else:
-        instruments = []
-
-    print("Optional: paste voice transcript (Enter to skip):")
-    transcript = input("> ").strip()
-
-    if transcript:
-        return apply_intent_from_transcript(
-            session_id, transcript, source="cli+transcript"
-        )
-    return apply_intent(session_id, mood=mood, instruments=instruments, source="cli")
+    """Voice-only intent setup (replaces keyboard prompts)."""
+    return apply_intent_from_elevenlabs(session_id)

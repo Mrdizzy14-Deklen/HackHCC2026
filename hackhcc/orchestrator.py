@@ -14,9 +14,13 @@ from hackhcc.composition import (
     try_mark_setup_complete,
 )
 from hackhcc.phases.conduct import run_conduct
-from hackhcc.phases.setup import run_setup, run_setup_stub
+from hackhcc.phases.setup import run_hum_and_pitch, run_setup, run_setup_elevenlabs, run_setup_stub
 from hackhcc.phases.setup.hum import run_hum_capture
-from hackhcc.phases.setup.intent import apply_intent, apply_intent_from_transcript
+from hackhcc.phases.setup.intent import (
+    apply_intent,
+    apply_intent_from_elevenlabs,
+    apply_intent_from_transcript,
+)
 from hackhcc.phases.setup.pitch import run_pitch_detection
 
 
@@ -40,14 +44,27 @@ def cmd_setup(args: argparse.Namespace) -> None:
             instruments=instruments,
             hum_seconds=args.hum_seconds,
             skip_intent=bool(args.mood or args.instruments),
-            interactive_intent=not (args.mood or args.instruments),
+            interactive_intent=not (args.mood or args.instruments or args.voice),
+            voice_intent=bool(args.voice),
         )
+    print(f"allow_conduct={comp.flags.get('allow_conduct')}")
+
+
+def cmd_setup_voice(args: argparse.Namespace) -> None:
+    sid = _session_id(args)
+    comp = run_setup_elevenlabs(
+        sid,
+        hum_seconds=args.hum_seconds,
+        use_voice_ui=not args.no_ui,
+    )
     print(f"allow_conduct={comp.flags.get('allow_conduct')}")
 
 
 def cmd_setup_intent(args: argparse.Namespace) -> None:
     sid = _session_id(args)
-    if args.transcript:
+    if args.elevenlabs:
+        comp = apply_intent_from_elevenlabs(sid)
+    elif args.transcript:
         comp = apply_intent_from_transcript(sid, args.transcript, source="cli")
     else:
         instruments = [s.strip() for s in args.instruments.split(",")] if args.instruments else []
@@ -61,6 +78,8 @@ def cmd_setup_intent(args: argparse.Namespace) -> None:
     print(f"intent_complete={comp.flags.get('intent_complete')}")
     if errors:
         print("  blockers:", "; ".join(errors) if not ready else "none for intent")
+    if getattr(args, "continue_setup", False) and comp.flags.get("intent_complete"):
+        run_hum_and_pitch(sid, hum_seconds=args.hum_seconds)
 
 
 def cmd_setup_hum(args: argparse.Namespace) -> None:
@@ -173,13 +192,43 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Dev: skip hum/pitch, force allow_conduct",
     )
+    p_setup.add_argument(
+        "--voice",
+        action="store_true",
+        help="Voice UI: say 'instruments' to show parts on screen (ElevenLabs STT)",
+    )
     p_setup.set_defaults(func=cmd_setup)
+
+    p_sv = sub.add_parser(
+        "setup-voice",
+        help="ElevenLabs intent → hum → pitch (instruments UI by default)",
+    )
+    _add_session_arg(p_sv)
+    p_sv.add_argument(
+        "--no-ui",
+        action="store_true",
+        help="Headless STT only (no on-screen instrument cards)",
+    )
+    p_sv.add_argument("--hum-seconds", type=float, default=5.0)
+    p_sv.set_defaults(func=cmd_setup_voice)
 
     p_si = sub.add_parser("setup-intent", help="Intent step only")
     _add_session_arg(p_si)
     p_si.add_argument("--mood", default="upbeat")
     p_si.add_argument("--instruments", default="synth,bass")
     p_si.add_argument("--transcript", default=None, help="Voice transcript text")
+    p_si.add_argument(
+        "--elevenlabs",
+        action="store_true",
+        help="Listen via ElevenLabs STT → apply_intent_from_transcript",
+    )
+    p_si.add_argument(
+        "--continue",
+        dest="continue_setup",
+        action="store_true",
+        help="After intent, run setup-hum and setup-pitch",
+    )
+    p_si.add_argument("--hum-seconds", type=float, default=5.0)
     p_si.set_defaults(func=cmd_setup_intent)
 
     p_sh = sub.add_parser("setup-hum", help="Hum capture step only")
