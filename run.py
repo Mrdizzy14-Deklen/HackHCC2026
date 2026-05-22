@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""HackHCC2026 v1 launcher."""
+"""
+Optional utilities. Main workflow:
+
+  python 1_setup.py
+  python 2_conduct.py
+"""
+
+from hackhcc.env import load_project_env
+
+load_project_env()
 
 from hackhcc.orchestrator import main
 

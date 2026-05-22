@@ -159,10 +159,37 @@ def apply_intent_from_transcript(
     )
 
 
+def run_intent_cli(session_id: str) -> Composition:
+    """Typed mood + instruments (no ElevenLabs)."""
+    print("\n--- Setup: intent (typed) ---")
+    mood = input("Mood (e.g. upbeat, chill) [upbeat]: ").strip() or "upbeat"
+    raw = input("Instruments, comma-separated (e.g. trumpet,bass) [synth,bass]: ").strip()
+    instruments = [s.strip() for s in raw.split(",") if s.strip()] if raw else None
+    return apply_intent(
+        session_id,
+        mood=mood,
+        instruments=instruments,
+        source="cli",
+    )
+
+
 def apply_intent_from_elevenlabs(session_id: str) -> Composition:
     """
     ElevenLabs STT → parse transcript → apply_intent (mood + tracks[]).
+    Falls back to typed CLI if ELEVENLABS_API_KEY is missing.
     """
+    import os
+
+    from hackhcc.env import ENV_FILE, load_project_env
+
+    load_project_env()
+    if not (os.getenv("ELEVENLABS_API_KEY") or "").strip():
+        print(
+            f"\nNo ELEVENLABS_API_KEY found (check {ENV_FILE}). "
+            "Using typed setup instead.\n"
+        )
+        return run_intent_cli(session_id)
+
     from hackhcc.stt.prompts import voice_input
 
     print("\n--- Intent (voice) ---")

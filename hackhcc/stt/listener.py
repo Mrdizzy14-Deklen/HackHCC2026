@@ -1,9 +1,9 @@
 """
 ElevenLabs realtime speech-to-text.
 
-Usage in another module (e.g. main.py):
+Usage:
 
-    from stt import SpeechListener
+    from hackhcc.stt import SpeechListener
 
     listener = SpeechListener(
         on_partial=lambda t: print("...", t.text),
@@ -76,10 +76,14 @@ TranscriptCallback = Callable[[TranscriptUpdate], None]
 
 
 def _default_api_key() -> str:
-    key = os.getenv("ELEVENLABS_API_KEY")
+    from hackhcc.env import ENV_FILE, load_project_env
+
+    load_project_env()
+    key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
     if not key:
         raise ValueError(
-            "Set ELEVENLABS_API_KEY in your environment (or a .env file)."
+            "Set ELEVENLABS_API_KEY in your environment or in "
+            f"{ENV_FILE} (e.g. ELEVENLABS_API_KEY=sk_...)."
         )
     return key
 

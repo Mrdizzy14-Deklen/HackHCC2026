@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import mediapipe as mp
 
-from hackhcc.audio.engine import ConductToneEngine
+from hackhcc.audio.engine import ConductAudioEngine, create_conduct_audio
 from hackhcc.composition import (
     Composition,
     ConductParams,
@@ -47,13 +47,14 @@ def _draw_hud(
     params: ConductParams,
     fps: float,
     hands: int,
+    audio_label: str = "",
 ) -> None:
     lines = [
         "CONDUCT  |  Q = quit  |  S = save session",
         f"Pitch: {params.pitch_shift_semitones:+.1f} st   "
         f"Tempo: {params.tempo_multiplier:.2f}x   "
         f"Style: {params.style_preset}",
-        "Raise index finger -> higher pitch | Open hand -> faster tempo",
+        audio_label or "Raise hand -> pitch | Open hand -> tempo",
         f"FPS: {int(fps)}   Hands: {hands}",
     ]
     y = 28
@@ -118,12 +119,21 @@ def run_conduct(session_id: str, *, enable_audio: bool = True) -> Composition:
     landmarker = create_hand_landmarker()
     print("Conduct ready. Raise hand = pitch up, open hand = tempo up.")
 
-    engine: ConductToneEngine | None = None
+    engine: ConductAudioEngine | None = None
+    audio_hud = ""
     if enable_audio:
         try:
-            engine = ConductToneEngine()
+            engine = create_conduct_audio(comp)
             engine.start()
-            print("Audio engine started (continuous tone follows your hand).")
+            if engine.mode == "stems":
+                print(f"Playing rendered stems — {engine.detail}")
+                audio_hud = f"Audio: stems ({engine.detail})"
+            elif engine.mode == "hums":
+                print(f"Playing raw hums (soft mix) — {engine.detail}")
+                audio_hud = f"Audio: hums ({engine.detail})"
+            else:
+                print(f"Audio: {engine.detail}")
+                audio_hud = f"Audio: {engine.detail}"
         except Exception as e:
             print(f"Audio disabled: {e}")
             engine = None
@@ -180,7 +190,13 @@ def run_conduct(session_id: str, *, enable_audio: bool = True) -> Composition:
             fps = 1.0 / (curr - prev_time) if prev_time else 0.0
             prev_time = curr
 
-            _draw_hud(frame, params=params, fps=fps, hands=hand_count)
+            _draw_hud(
+                frame,
+                params=params,
+                fps=fps,
+                hands=hand_count,
+                audio_label=audio_hud,
+            )
             cv2.imshow(WINDOW_NAME, frame)
 
             key = cv2.waitKey(1) & 0xFF

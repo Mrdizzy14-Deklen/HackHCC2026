@@ -1,68 +1,60 @@
-"""Simple real-time tone driven by conduct parameters (v1 preview audio)."""
+"""Conduct audio: hum playback (preferred) or fallback tone."""
 
 from __future__ import annotations
 
-import threading
+from typing import Protocol
 
-import numpy as np
-import sounddevice as sd
+from hackhcc.composition import Composition
 
-SAMPLE_RATE = 44_100
-BASE_FREQ = 261.63  # C4
+from hackhcc.audio.playback import ConductHumPlayback, ConductStemPlayback
+from hackhcc.audio.tone import ConductToneEngine
+
+__all__ = ["ConductAudioEngine", "create_conduct_audio"]
 
 
-class ConductToneEngine:
-    """Plays a continuous tone; pitch/tempo follow conduct params."""
+class ConductAudioDriver(Protocol):
+    def update(self, pitch_shift_semitones: float, tempo_multiplier: float) -> None: ...
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
 
-    def __init__(self, base_freq: float = BASE_FREQ) -> None:
-        self._base_freq = base_freq
-        self._pitch_semitones = 0.0
-        self._tempo = 1.0
-        self._phase = 0.0
-        self._lock = threading.Lock()
-        self._stream: sd.OutputStream | None = None
-        self._running = False
 
-    @property
-    def frequency(self) -> float:
-        with self._lock:
-            return self._base_freq * (2.0 ** (self._pitch_semitones / 12.0))
+class ConductAudioEngine:
+    """Wraps hum playback or sine tone with the same update/start/stop API."""
+
+    def __init__(self, inner: ConductAudioDriver, *, mode: str, detail: str = "") -> None:
+        self._inner = inner
+        self.mode = mode
+        self.detail = detail
 
     def update(self, pitch_shift_semitones: float, tempo_multiplier: float) -> None:
-        with self._lock:
-            self._pitch_semitones = pitch_shift_semitones
-            self._tempo = max(0.5, min(2.0, tempo_multiplier))
-
-    def _callback(self, outdata, frames, _time, _status) -> None:
-        with self._lock:
-            freq = self._base_freq * (2.0 ** (self._pitch_semitones / 12.0))
-            tempo = self._tempo
-            phase = self._phase
-
-        t = (np.arange(frames, dtype=np.float64) + phase) / SAMPLE_RATE
-        # Soft envelope to reduce clicks when frequency jumps
-        wave = 0.25 * np.sin(2.0 * np.pi * freq * tempo * t)
-        outdata[:, 0] = wave.astype(np.float32)
-
-        with self._lock:
-            self._phase = phase + frames
+        self._inner.update(pitch_shift_semitones, tempo_multiplier)
 
     def start(self) -> None:
-        if self._running:
-            return
-        self._stream = sd.OutputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            blocksize=1024,
-            callback=self._callback,
-        )
-        self._stream.start()
-        self._running = True
+        self._inner.start()
 
     def stop(self) -> None:
-        if self._stream:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
-        self._running = False
+        self._inner.stop()
+
+
+def create_conduct_audio(comp: Composition) -> ConductAudioEngine:
+    """
+    Build audio for conduct: rendered stems → raw hums → test tone.
+    """
+    stems = ConductStemPlayback.from_composition(comp)
+    if stems is not None:
+        ids = ", ".join(stems.track_ids)
+        return ConductAudioEngine(
+            stems,
+            mode="stems",
+            detail=f"instrument mix ({ids})",
+        )
+    hum = ConductHumPlayback.from_composition(comp)
+    if hum is not None:
+        ids = ", ".join(hum.track_ids)
+        return ConductAudioEngine(
+            hum,
+            mode="hums",
+            detail=f"raw hum loop ({ids})",
+        )
+    tone = ConductToneEngine()
+    return ConductAudioEngine(tone, mode="tone", detail="sine preview (no audio)")

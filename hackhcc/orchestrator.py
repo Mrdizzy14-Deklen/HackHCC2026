@@ -22,6 +22,7 @@ from hackhcc.phases.setup.intent import (
     apply_intent_from_transcript,
 )
 from hackhcc.phases.setup.pitch import run_pitch_detection
+from hackhcc.phases.setup.render import run_render_stems
 
 
 def cmd_new(args: argparse.Namespace) -> None:
@@ -44,10 +45,19 @@ def cmd_setup(args: argparse.Namespace) -> None:
             instruments=instruments,
             hum_seconds=args.hum_seconds,
             skip_intent=bool(args.mood or args.instruments),
-            interactive_intent=not (args.mood or args.instruments or args.voice),
+            interactive_intent=not (args.mood or args.instruments or args.voice or args.text),
             voice_intent=bool(args.voice),
+            text_intent=bool(args.text),
+            render_stems=not args.no_render,
+            use_musicgen=bool(args.musicgen),
         )
     print(f"allow_conduct={comp.flags.get('allow_conduct')}")
+
+
+def cmd_render_stems(args: argparse.Namespace) -> None:
+    sid = _session_id(args)
+    comp = run_render_stems(sid, use_musicgen=bool(args.musicgen))
+    print(f"stems_complete={comp.flags.get('stems_complete')}")
 
 
 def cmd_setup_voice(args: argparse.Namespace) -> None:
@@ -197,7 +207,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Voice UI: say 'instruments' to show parts on screen (ElevenLabs STT)",
     )
+    p_setup.add_argument(
+        "--text",
+        action="store_true",
+        help="Typed intent prompts (no ElevenLabs)",
+    )
+    p_setup.add_argument(
+        "--no-render",
+        action="store_true",
+        help="Skip stem render (conduct uses raw hums)",
+    )
+    p_setup.add_argument(
+        "--musicgen",
+        action="store_true",
+        help="Use Replicate MusicGen (needs REPLICATE_API_TOKEN)",
+    )
     p_setup.set_defaults(func=cmd_setup)
+
+    p_render = sub.add_parser("render-stems", help="Render instrument stems from notes/hums")
+    _add_session_arg(p_render)
+    p_render.add_argument("--musicgen", action="store_true")
+    p_render.set_defaults(func=cmd_render_stems)
 
     p_sv = sub.add_parser(
         "setup-voice",

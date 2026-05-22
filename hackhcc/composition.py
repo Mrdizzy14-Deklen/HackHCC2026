@@ -74,6 +74,7 @@ class Track:
     instrument: str = "synth"
     role: str = "melody"
     hum_path: str = ""
+    stem_path: str = ""
     notes: list[Note] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,6 +116,7 @@ def default_flags() -> dict[str, bool]:
         "intent_complete": False,
         "hums_complete": False,
         "pitch_complete": False,
+        "stems_complete": False,
         "setup_complete": False,
         "allow_conduct": False,
         "allow_export": False,
@@ -191,6 +193,10 @@ def hums_dir(session_id: str) -> Path:
     return session_dir(session_id) / "hums"
 
 
+def stems_dir(session_id: str) -> Path:
+    return session_dir(session_id) / "stems"
+
+
 def composition_path(session_id: str) -> Path:
     return session_dir(session_id) / "composition.json"
 
@@ -219,6 +225,7 @@ def save_composition(composition: Composition) -> Path:
     root = session_dir(composition.session_id)
     root.mkdir(parents=True, exist_ok=True)
     hums_dir(composition.session_id).mkdir(parents=True, exist_ok=True)
+    stems_dir(composition.session_id).mkdir(parents=True, exist_ok=True)
 
     refresh_setup_flags(composition)
 
@@ -249,6 +256,18 @@ def refresh_setup_flags(comp: Composition) -> None:
 
     pitch_ok = hums_ok and all(len(t.notes) >= 1 for t in comp.tracks)
     comp.flags["pitch_complete"] = pitch_ok
+
+    stems_ok = True
+    if not comp.tracks:
+        stems_ok = False
+    for track in comp.tracks:
+        if not track.stem_path:
+            stems_ok = False
+            break
+        if not resolve_session_path(comp.session_id, track.stem_path).is_file():
+            stems_ok = False
+            break
+    comp.flags["stems_complete"] = stems_ok
 
 
 def evaluate_setup_gates(comp: Composition) -> tuple[bool, list[str]]:
