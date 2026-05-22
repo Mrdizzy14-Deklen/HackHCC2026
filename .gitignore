@@ -222,3 +222,5 @@ models/
 
 # Local pip install target (e.g. pip install --target vendor)
 vendor/
+
+.vscode/
