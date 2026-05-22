@@ -224,3 +224,14 @@ models/
 vendor/
 
 .vscode/
+# ---------- Next.js / Node ----------
+/node_modules
+/.next/
+/out/
+/build
+next-env.d.ts
+.vercel
+*.tsbuildinfo
+
+# local env files (Google OAuth secrets etc.)
+.env*.local
