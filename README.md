@@ -4,6 +4,12 @@ Multimodal music pipeline (v1): **setup** (intent → hum → pitch) then **cond
 
 **Contract:** [docs/CONTRACT.md](docs/CONTRACT.md) — `composition.json` fields and which agent writes what.
 
+## Voice input
+
+All interactive prompts use **ElevenLabs STT** (no keyboard `input()`). Say your answer, then **"done"**, **"next"**, or **"finished"**. Hum capture uses **"ready"**, **"start"**, or **"go"** to begin recording.
+
+Requires `ELEVENLABS_API_KEY` in `.env`.
+
 ## Quick start
 
 ```bash
@@ -12,9 +18,21 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Full setup (prompts for mood/instruments, record hums, detect pitch) + conduct
+# Full setup (voice prompts for mood/instruments, record hums, detect pitch) + conduct
 python run.py setup -s mysong
 python run.py conduct -s mysong
+
+# ElevenLabs full setup: voice intent → hum → pitch (instruments pop up on screen)
+python run.py setup-voice -s mysong
+python run.py setup -s mysong --voice   # same pipeline via `setup`
+
+# Intent only (headless STT), then hum + pitch separately:
+python run.py setup-intent -s mysong --elevenlabs
+python run.py setup-hum -s mysong
+python run.py setup-pitch -s mysong
+
+# Or intent + hum + pitch in one go:
+python run.py setup-intent -s mysong --elevenlabs --continue
 
 # Non-interactive setup (no mic prompts for intent)
 python run.py setup -s mysong --mood upbeat --instruments trumpet,bass
@@ -39,9 +57,7 @@ Conduct only runs when **hums + pitch** exist on every track (unless `--stub`).
 ```bash
 export ELEVENLABS_API_KEY=your_key
 python run.py new -s mysong
-python examples/elevenlabs_intent_hook.py -s mysong   # voice → intent
-python run.py setup-hum -s mysong
-python run.py setup-pitch -s mysong                   # unlocks conduct if gates pass
+python examples/elevenlabs_intent_hook.py -s mysong --continue   # voice → intent → hum → pitch
 ```
 
 Or in code:

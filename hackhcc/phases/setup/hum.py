@@ -14,6 +14,7 @@ from hackhcc.composition import (
     load_composition,
     save_composition,
 )
+from hackhcc.stt.prompts import voice_input
 
 SAMPLE_RATE = 22_050
 DEFAULT_SECONDS = 5.0
@@ -55,7 +56,11 @@ def capture_track_hum(
         raise ValueError(f"Unknown track id: {track_id}")
 
     print(f"\nTrack: {track.name} ({track.instrument})")
-    input("  Press Enter when ready to record...")
+    voice_input(
+        "  Hum this part when recording starts.",
+        done_phrases=("ready", "start", "go"),
+        allow_empty=True,
+    )
     audio = record_hum(seconds)
     rel = save_hum_wav(session_id, track_id, audio)
     track.hum_path = rel
