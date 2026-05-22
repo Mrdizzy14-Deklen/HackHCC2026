@@ -38,7 +38,7 @@ def run_hum_and_pitch(
     *,
     hum_seconds: float = 5.0,
     render_stems: bool = True,
-    use_musicgen: bool = False,
+    use_musicgen: bool = True,
 ) -> Composition:
     """Setup: hums → pitch → render stems → gate."""
     print("\n--- Hum capture ---")
@@ -72,7 +72,7 @@ def run_setup_elevenlabs(
     hum_seconds: float = 5.0,
     use_voice_ui: bool = True,
     render_stems: bool = True,
-    use_musicgen: bool = False,
+    use_musicgen: bool = True,
 ) -> Composition:
     """
     Full ElevenLabs setup: intent (voice UI or headless STT) → hum → pitch.
@@ -105,14 +105,15 @@ def run_setup(
     voice_intent: bool = False,
     text_intent: bool = False,
     render_stems: bool = True,
-    use_musicgen: bool = False,
+    use_musicgen: bool = True,
 ) -> Composition:
     """
     Full setup pipeline:
-      1. intent (mood + tracks)
+      1. intent (mood only — instruments are fixed 5)
       2. hum capture (WAV per track)
       3. pitch detection (notes per track)
-      4. gate → setup_complete / allow_conduct
+      4. stem render via MusicGen
+      5. gate → setup_complete / allow_conduct
     """
     sid = _ensure_session(session_id)
     print(f"Session: {sid}")

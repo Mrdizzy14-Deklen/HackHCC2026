@@ -67,11 +67,19 @@ def tracks_from_instruments(names: list[str]) -> list[Track]:
     return tracks
 
 
-def default_two_tracks() -> list[Track]:
+def default_five_tracks() -> list[Track]:
+    """The five instruments available in this app — always used."""
     return [
-        Track(id="melody", name="Melody", instrument="synth", role="melody"),
-        Track(id="bass", name="Bass", instrument="bass", role="bass"),
+        Track(id="piano",   name="Piano",   instrument="piano",   role="chords"),
+        Track(id="trumpet", name="Trumpet", instrument="trumpet", role="melody"),
+        Track(id="violin",  name="Violin",  instrument="violin",  role="melody"),
+        Track(id="flute",   name="Flute",   instrument="flute",   role="melody"),
+        Track(id="drums",   name="Drums",   instrument="drums",   role="perc"),
     ]
+
+
+def default_two_tracks() -> list[Track]:
+    return default_five_tracks()
 
 
 def parse_transcript(text: str) -> tuple[str, list[str]]:
@@ -109,8 +117,7 @@ def apply_intent(
 ) -> Composition:
     """
     Intent agent entrypoint. Writes mood, tracks[], intent.* only.
-
-    Teammate (ElevenLabs): call with transcript or structured fields.
+    Instruments are always the fixed 5 (piano, trumpet, violin, flute, drums).
     """
     try:
         comp = load_composition(session_id)
@@ -119,13 +126,8 @@ def apply_intent(
         comp = load_composition(session_id)
 
     comp.mood = mood.strip()
-    if tracks is not None:
-        comp.tracks = tracks
-    elif instruments:
-        parsed = tracks_from_instruments(instruments)
-        comp.tracks = parsed if parsed else default_two_tracks()
-    elif not comp.tracks:
-        comp.tracks = default_two_tracks()
+    # Always use the fixed 5 instruments regardless of what was requested
+    comp.tracks = default_five_tracks()
 
     comp.intent = Intent(
         raw_transcript=raw_transcript or comp.intent.raw_transcript,
@@ -144,33 +146,24 @@ def apply_intent_from_transcript(
     *,
     source: str = "elevenlabs",
 ) -> Composition:
-    """Parse spoken/text setup and write mood + tracks[] (intent agent)."""
-    mood, instruments = parse_transcript(transcript)
+    """Parse mood from transcript and create 5 fixed instrument tracks."""
+    mood, _ = parse_transcript(transcript)
     if not mood:
-        mood = "neutral"
-    if not instruments:
-        instruments = ["synth", "bass"]
+        mood = "upbeat"
     return apply_intent(
         session_id,
         mood=mood,
-        instruments=instruments,
         raw_transcript=transcript,
         source=source,
     )
 
 
 def run_intent_cli(session_id: str) -> Composition:
-    """Typed mood + instruments (no ElevenLabs)."""
+    """Typed mood only (instruments are always the fixed 5)."""
     print("\n--- Setup: intent (typed) ---")
-    mood = input("Mood (e.g. upbeat, chill) [upbeat]: ").strip() or "upbeat"
-    raw = input("Instruments, comma-separated (e.g. trumpet,bass) [synth,bass]: ").strip()
-    instruments = [s.strip() for s in raw.split(",") if s.strip()] if raw else None
-    return apply_intent(
-        session_id,
-        mood=mood,
-        instruments=instruments,
-        source="cli",
-    )
+    print("Instruments: Piano, Trumpet, Violin, Flute, Drums (fixed)")
+    mood = input("Mood (e.g. upbeat, chill, jazz, epic) [upbeat]: ").strip() or "upbeat"
+    return apply_intent(session_id, mood=mood, source="cli")
 
 
 def apply_intent_from_elevenlabs(session_id: str) -> Composition:
@@ -193,9 +186,9 @@ def apply_intent_from_elevenlabs(session_id: str) -> Composition:
     from hackhcc.stt.prompts import voice_input
 
     print("\n--- Intent (voice) ---")
+    print("  Instruments: Piano, Trumpet, Violin, Flute, Drums (fixed)")
     transcript = voice_input(
-        "Describe your song: mood (upbeat, chill…) and instruments "
-        "(trumpet, bass, piano…).",
+        "What mood do you want for your song? (e.g. upbeat, chill, jazz, epic, dark)",
         done_phrases=("done", "next", "finished"),
     )
     comp = apply_intent_from_transcript(
