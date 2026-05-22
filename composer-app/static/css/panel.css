@@ -1,0 +1,103 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; color: #f5f3ee; overflow: hidden; }
+canvas { display: block; width: 100vw; height: 100vh; }
+
+.panel {
+  position: fixed; top: 24px; right: 24px; bottom: 24px; width: 340px;
+  display: flex; flex-direction: column; gap: 28px;
+  padding: 28px 24px;
+  background: rgba(20, 18, 14, 0.45);
+  backdrop-filter: blur(40px) saturate(140%);
+  -webkit-backdrop-filter: blur(40px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), inset 0 0 0 0.5px rgba(255, 255, 255, 0.05);
+  transition: transform 0.3s ease;
+}
+.panel.collapsed { transform: translateX(calc(100% + 24px)); }
+
+.panel-handle {
+  position: absolute; top: 0; left: -28px;
+  width: 24px; height: 24px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none;
+  color: #000; cursor: pointer;
+  transition: transform 0.3s ease, opacity 0.15s;
+  opacity: 0.7;
+}
+.panel-handle:hover { opacity: 1; }
+.panel-handle svg { transition: transform 0.3s ease; }
+.panel.collapsed .panel-handle svg { transform: rotate(180deg); }
+
+.header h1 { font: 500 20px/1 'Fraunces', serif; letter-spacing: -0.01em; }
+.header p { margin-top: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+
+.label {
+  margin-bottom: 10px; font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: rgba(255, 255, 255, 0.4);
+}
+
+.sections { display: flex; flex-wrap: wrap; gap: 6px; }
+.tab {
+  padding: 6px 11px; font: inherit; font-size: 12px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  transition: background 0.15s, color 0.15s;
+}
+.tab:hover { background: rgba(255, 255, 255, 0.08); }
+.tab.active { background: rgba(255, 255, 255, 0.92); color: #1a1814; border-color: transparent; }
+.tab.add {
+  width: 26px; padding: 0; line-height: 24px; font-size: 16px;
+  color: rgba(255, 255, 255, 0.7);
+}
+.tab.add:hover { color: #fff; }
+
+.record { display: flex; align-items: center; gap: 14px; }
+.record-btn {
+  width: 52px; height: 52px; padding: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 50%;
+  transition: border-color 0.2s;
+}
+.record-btn:hover { border-color: rgba(255, 255, 255, 0.3); }
+.dot { width: 14px; height: 14px; border-radius: 50%; background: #e85d4a; transition: all 0.2s; }
+.record-btn.on .dot { width: 12px; height: 12px; border-radius: 3px; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.5; } }
+
+.pitch { flex: 1; }
+.pitch-note { font: 500 28px/1 'Fraunces', serif; letter-spacing: -0.02em; }
+.pitch-cents { margin-left: 6px; font-size: 11px; color: rgba(255, 255, 255, 0.45); }
+.pitch-sub { margin-top: 2px; font-size: 11px; color: rgba(255, 255, 255, 0.4); }
+
+.notes-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.notes { flex: 1; overflow-y: auto; margin: 0 -8px; padding: 0 8px; }
+.notes::-webkit-scrollbar { width: 0; }
+
+.note {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer;
+  transition: background 0.1s;
+}
+.note:hover { background: rgba(255, 255, 255, 0.04); }
+.note.active { background: rgba(255, 255, 255, 0.08); }
+.note-left { display: flex; align-items: baseline; gap: 10px; }
+.note-pitch { font: 500 15px/1 'Fraunces', serif; }
+.note-dur { font-size: 11px; color: rgba(255, 255, 255, 0.4); }
+
+.footer { display: flex; gap: 8px; }
+.btn {
+  flex: 1; padding: 11px; cursor: pointer;
+  font: 500 12px/1 'Inter', sans-serif;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.75);
+  border-radius: 10px;
+  transition: background 0.15s;
+}
+.btn:hover { background: rgba(255, 255, 255, 0.08); }
+.btn.primary { background: rgba(255, 255, 255, 0.95); color: #1a1814; border-color: transparent; }
+.btn.primary:hover { background: #fff; }
