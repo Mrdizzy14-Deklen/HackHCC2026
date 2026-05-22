@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# HackHCC2026 — MediaPipe models (auto-downloaded on first run)
+models/
+
+# Local pip install target (e.g. pip install --target vendor)
+vendor/
