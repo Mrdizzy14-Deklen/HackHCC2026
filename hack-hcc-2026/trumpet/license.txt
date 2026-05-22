@@ -1,0 +1,11 @@
+Model Information:
+* title:	Trumpet
+* source:	https://sketchfab.com/3d-models/trumpet-1dc9efd37bf14d1b9d1e3de0ca90435c
+* author:	Kagelok (https://sketchfab.com/Kagelok)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Trumpet" (https://sketchfab.com/3d-models/trumpet-1dc9efd37bf14d1b9d1e3de0ca90435c) by Kagelok (https://sketchfab.com/Kagelok) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
