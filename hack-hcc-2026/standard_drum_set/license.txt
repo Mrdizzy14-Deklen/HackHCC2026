@@ -1,0 +1,11 @@
+Model Information:
+* title:	Standard Drum Set
+* source:	https://sketchfab.com/3d-models/standard-drum-set-8d02d9cb0e0441ab96d799c8ca7eff50
+* author:	Heataker (https://sketchfab.com/Heataker)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Standard Drum Set" (https://sketchfab.com/3d-models/standard-drum-set-8d02d9cb0e0441ab96d799c8ca7eff50) by Heataker (https://sketchfab.com/Heataker) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
