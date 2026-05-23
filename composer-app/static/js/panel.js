@@ -975,6 +975,7 @@ async function _finalizeWithAI() {
 // ---------------------------------------------------------------------------
 
 async function _enterLyricsPhase() {
+  window.dispatchEvent(new CustomEvent("song:final-stop")); // kill beat/shake before lyrics UI
   _inEffectsMode   = false;
   _inLyricsMode    = true;
   _lyricsText      = "";
@@ -1152,7 +1153,6 @@ async function _mixLyricsAndExport() {
   if (!_lyricsText.trim()) { _exportFinal(); return; }
 
   $title.textContent = "Generating Song…";
-  $sub.textContent   = "Starting ACE-Step…";
   $sections.innerHTML = `<p class="fx-hint">Composing a warm, cohesive song with your lyrics.<br>Runs on Replicate — takes 60–120 seconds.</p>`;
   document.querySelector(".footer").innerHTML = "";
 
