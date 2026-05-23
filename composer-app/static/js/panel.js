@@ -24,13 +24,12 @@ const CORE_TRACKS = [
   { id: "piano",   name: "Piano" },
   { id: "violin",  name: "Violin" },
   { id: "trumpet", name: "Trumpet" },
-  { id: "flute",   name: "Flute" },
   { id: "drums",   name: "Drums" },
 ];
 
 // Instruments the 3D scene can render (superset — user can add via voice)
 const SCENE_INSTRUMENTS = [
-  "piano", "violin", "trumpet", "flute", "drums",
+  "piano", "violin", "trumpet", "drums",
   "oboe", "trombone", "french horn",
 ];
 
