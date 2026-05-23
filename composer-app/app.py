@@ -477,11 +477,18 @@ async def serve_master():
 
 # --- Lyrics vocal mix  (primary: ACE-Step / fallback: ElevenLabs TTS) ---
 
+ACE_STEP_VERSION = "280fc4f9ee507577f880a167f639c02622421d8fecf492454320311217b688f1"
+
+
 def _do_mix_lyrics_ace_step(sid: str, lyrics: str, final_path: Path, out: Path) -> None:
     """
-    Add cohesive vocals to final.wav using ACE-Step on Replicate.
-    ACE-Step conditions on the existing instrumental and generates singing that
-    fits the key, tempo, and mood — rather than just overlaying TTS speech.
+    Generate a full song with real vocals using ACE-Step (lucataco/ace-step).
+
+    ACE-Step is text-to-music: it takes tags (style/mood/instruments) + lyrics
+    and generates a cohesive song with actual singing.  It does NOT condition on
+    existing audio, so the output is a fresh generation — but the mood, BPM, and
+    instrument palette from the user's composition are encoded in the tags so the
+    style is consistent.
     """
     import replicate
     import numpy as np
@@ -494,13 +501,23 @@ def _do_mix_lyrics_ace_step(sid: str, lyrics: str, final_path: Path, out: Path) 
     bpm         = comp.bpm or 120
     instruments = [t.instrument for t in comp.tracks]
 
-    style_prompt = (
-        f"{mood} song, warm expressive lead vocals, "
-        f"{', '.join(instruments)} accompaniment, {bpm} bpm, "
-        f"studio quality, cohesive arrangement, radio ready"
-    )
+    # ACE-Step tags: comma-separated descriptors (no full sentences)
+    tags = ", ".join(filter(None, [
+        mood,
+        "vocal",
+        "singer",
+        "singing",
+        "lead vocals",
+        "lyrics",
+        *instruments,
+        f"{bpm} bpm",
+        "orchestral",
+        "studio quality",
+        "warm",
+        "cohesive",
+    ]))
 
-    # Give ACE-Step structural hints so it segments verses from chorus
+    # Wrap plain text in structural tags so the model knows verse/chorus layout
     fmt_lyrics = lyrics.strip()
     if fmt_lyrics and not fmt_lyrics.startswith("["):
         lines = fmt_lyrics.splitlines()
@@ -510,35 +527,46 @@ def _do_mix_lyrics_ace_step(sid: str, lyrics: str, final_path: Path, out: Path) 
             + "\n\n[chorus]\n" + "\n".join(lines[mid:])
         )
 
-    # Resolve latest ACE-Step version dynamically (same pattern as MusicGen)
-    try:
-        vid     = replicate.models.get("zsxkib/ace-step").latest_version.id
-        ace_ref = f"zsxkib/ace-step:{vid}"
-        print(f"  [lyrics-ace] ACE-Step version: {vid[:16]}…")
-    except Exception:
-        ace_ref = "zsxkib/ace-step"
+    ace_ref = f"lucataco/ace-step:{ACE_STEP_VERSION}"
+    print(f"  [lyrics-ace] Generating song with vocals — tags: {tags[:60]}…")
+    print(f"  [lyrics-ace] Lyrics preview: {fmt_lyrics[:80]}…")
 
-    print(f"  [lyrics-ace] Conditioning on final.wav + lyrics ({len(fmt_lyrics)} chars)…")
-    with final_path.open("rb") as audio_file:
-        output = replicate.run(
-            ace_ref,
-            input={
-                "lyrics":               fmt_lyrics,
-                "audio_prompt":         audio_file,   # existing instrumental as reference
-                "prompt":               style_prompt,
-                "audio_duration":       30.0,
-                "guidance_scale":       15.0,
-                "audio_prompt_strength": 0.65,        # how strongly to follow the reference
-                "num_inference_steps":  60,
-            },
-        )
+    output = replicate.run(
+        ace_ref,
+        input={
+            "tags":                 tags,
+            "lyrics":               fmt_lyrics,
+            "duration":             30,
+            "guidance_scale":       7.0,
+            "lyric_guidance_scale": 7.0,   # 5–10 needed for actual vocal presence
+            "number_of_steps":      100,
+            "seed":                 -1,
+        },
+    )
 
-    url = str(output) if not isinstance(output, list) else str(output[0])
-    tmp = session_dir(sid) / "_ace_step_tmp.wav"
+    # Replicate may return a FileOutput object or a plain URL string
+    item = output[0] if isinstance(output, list) else output
+    url  = item.url if hasattr(item, "url") else str(item)
+
+    # Download to a temp file, then load with librosa (handles WAV + MP3)
+    import urllib.request, librosa
+    from scipy.signal import butter, sosfiltfilt
+    tmp = session_dir(sid) / "_ace_step_tmp.bin"
     try:
-        audio   = _audio_from_url_or_path(url, tmp)
-        clipped = np.clip(audio, -1.0, 1.0)
-        wavfile.write(str(out), OUTPUT_SR, (clipped * 32767).astype(np.int16))
+        urllib.request.urlretrieve(url, str(tmp))
+        audio, sr = librosa.load(str(tmp), sr=44_100, mono=True)
+
+        # Warmth pass: gentle high-shelf rolloff above 10 kHz reduces harshness,
+        # then blend 65% filtered + 35% original to keep transient clarity
+        sos    = butter(2, 10_000, fs=44_100, btype="low", output="sos")
+        warm   = sosfiltfilt(sos, audio)
+        audio  = warm * 0.65 + audio * 0.35
+
+        # Normalize to -1 dBFS so it's loud but never clips
+        peak  = np.max(np.abs(audio)) or 1.0
+        audio = audio / peak * 0.891   # 0.891 ≈ -1 dBFS
+
+        wavfile.write(str(out), 44_100, (audio * 32767).astype(np.int16))
         print(f"  [lyrics-ace] Done → {out.name}")
     finally:
         if tmp.is_file():

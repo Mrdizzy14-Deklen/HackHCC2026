@@ -1133,10 +1133,19 @@ function _captureLyrics() {
 async function _mixLyricsAndExport() {
   if (!_lyricsText.trim()) { _exportFinal(); return; }
 
-  $title.textContent = "Adding Vocals…";
-  $sub.textContent   = "ACE-Step is singing your lyrics over the music…";
-  $sections.innerHTML = `<p class="fx-hint">ACE-Step is conditioning on your music and adding vocals.<br><br>This takes about 30–60 seconds…</p>`;
+  $title.textContent = "Generating Song…";
+  $sub.textContent   = "Starting ACE-Step…";
+  $sections.innerHTML = `<p class="fx-hint">Composing a warm, cohesive song with your lyrics.<br>Runs on Replicate — takes 60–120 seconds.</p>`;
   document.querySelector(".footer").innerHTML = "";
+
+  // Live elapsed timer so the user knows it's actively processing
+  let elapsed = 0;
+  const dots = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+  const timer = setInterval(() => {
+    elapsed++;
+    const spin = dots[elapsed % dots.length];
+    $sub.textContent = `${spin} Composing… ${elapsed}s`;
+  }, 1000);
 
   try {
     const resp = await fetch("/api/lyrics/mix", {
@@ -1154,9 +1163,12 @@ async function _mixLyricsAndExport() {
       }, 1000);
     });
 
+    clearInterval(timer);
+    $sub.textContent = `Done in ${elapsed}s`;
     showToast("✓ Vocals mixed in!");
     _exportFinal(true);
   } catch (err) {
+    clearInterval(timer);
     showToast(`Vocals failed: ${err.message} — exporting without vocals`);
     _exportFinal(false);
   }
