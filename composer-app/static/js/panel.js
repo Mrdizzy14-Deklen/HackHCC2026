@@ -1014,8 +1014,9 @@ function _finishLyricsCapture() {
 function _captureLyrics() {
   if (_lyricsRecording) return;
   _lyricsRecording = true;
-  $sub.textContent = "🎙 Listening… speak your lyrics";
-  document.querySelector(".footer").innerHTML = `<button class="btn primary" id="btn-stop-lyrics">Done ✓</button>`;
+  _lyricsFinishing = false;
+  $sub.textContent = "🎙 Speak lyrics — ✊ fist when done";
+  document.querySelector(".footer").innerHTML = `<button class="btn primary" id="btn-stop-lyrics">✊ Done (3s)</button>`;
 
   let _wsResources = null;  // { ws, audioCtx, processor, micStream }
   let _activeSR    = null;  // Web Speech rec instance
@@ -1032,15 +1033,11 @@ function _captureLyrics() {
     }
   }
 
+  // Expose so _finishLyricsCapture (called by fist gesture) can reach it
+  _lyricsStopFn = _stopAll;
+
   document.getElementById("btn-stop-lyrics").addEventListener("click", () => {
-    _lyricsRecording = false;
-    if (_wsResources) {
-      // Flush textarea value if we fell back to typed input
-      const ta = document.getElementById("lyrics-input");
-      if (ta) _lyricsText = ta.value;
-    }
-    _stopAll();
-    _mixLyricsAndExport();
+    _finishLyricsCapture();
   });
 
   // Fallback #2: textarea for typed lyrics
@@ -1558,10 +1555,11 @@ window.addEventListener("gesture:palm-rotate", (e) => {
   _updateFxUI();
 });
 
-// Fist (one-shot) → switch fx param (effects mode) or skip lyrics (lyrics mode)
+// Fist (one-shot) → switch fx param (effects) / finish lyrics with countdown / skip if not recording
 window.addEventListener("gesture:fist", () => {
   if (_inEffectsMode) { _switchFxParam(); return; }
-  if (_inLyricsMode)  { _exportFinal();   return; }
+  if (_inLyricsMode && _lyricsRecording) { _finishLyricsCapture(); return; }
+  if (_inLyricsMode) { _exportFinal(); return; }
 });
 
 // Fist hold → voice add instrument (only in setup mode)
