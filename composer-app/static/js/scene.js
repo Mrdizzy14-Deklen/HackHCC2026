@@ -81,6 +81,14 @@ let notePlaybackQueue = [];
 let noteLastFrame = performance.now();
 const instrumentRefs = new Map();
 
+let _floorMesh = null;
+let _beatDecay = 0;
+let _cameraShake = 0;
+let _floorPulse = 0;
+let _beatInterval = null;
+let _notePlaybackList = [];
+let _noteLoopTimer = null;
+
 function getInstrumentWorldPosition(kind) {
   const ref = instrumentRefs.get(kind);
   if (!ref) {
@@ -137,6 +145,16 @@ function spawnNote(trackId) {
   };
   scene.add(sprite);
   ACTIVE_NOTE_SPRITES.push(sprite);
+}
+
+function _onBeat(strong) {
+  const mult = strong ? 1.5 : 1.0;
+  _beatDecay = mult;
+  _cameraShake = strong ? 0.06 : 0.03;
+  _floorPulse = strong ? 1.0 : 0.65;
+  for (const inst of instruments) {
+    inst.outer.userData.beatBob = strong ? 0.22 : 0.12;
+  }
 }
 
 prewarmNoteTextures();
@@ -313,7 +331,8 @@ buildCrescentRisers();
     emissive: 0x180a03,
     emissiveIntensity: 0.18,
   });
-  const floor = new THREE.Mesh(geo, mat);
+  _floorMesh = new THREE.Mesh(geo, mat);
+  const floor = _floorMesh;
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(0, -0.05, -1);
   floor.receiveShadow = true;
@@ -544,10 +563,12 @@ function placeInstrument(
 
   const outer = new THREE.Group();
   outer.add(inner);
-  
+
   const instrumentY = getTierY(z) + (PLATFORM_THICKNESS / 2) + y;
   outer.position.set(x, instrumentY, z);
-  
+  outer.userData.baseY = instrumentY;
+  outer.userData.beatBob = 0;
+
   scene.add(outer);
 
   if (spotLight) {
@@ -711,19 +732,64 @@ window.addEventListener("notes:track-ready", (e) => {
   prewarmNoteTextures(e.detail?.notes ?? []);
 });
 
-window.addEventListener("notes:playback-start", (e) => {
-  const notes = Array.isArray(e.detail?.notes) ? e.detail.notes : [];
-  notePlaybackQueue = notes
-    .filter((note) => Number.isFinite(Number(note.midi)))
-    .map((note) => ({
+function _fillNoteQueue() {
+  if (!_notePlaybackList.length) return;
+  const t0 = performance.now();
+  notePlaybackQueue = _notePlaybackList.map((note) => {
+    const startMs = Number(note.startMs ?? 0);
+    return {
       trackId: note.trackId,
       midi: Number(note.midi),
-      dueAt: performance.now() + Math.max(0, Number(note.startMs ?? 0)),
-    }));
+      dueAt: t0 + startMs,
+    };
+  });
+}
+
+function _scheduleNoteLoop() {
+  clearTimeout(_noteLoopTimer);
+  if (!_notePlaybackList.length) return;
+  const maxStartMs = _notePlaybackList.reduce((m, n) => Math.max(m, Number(n.startMs ?? 0)), 0);
+  const loopMs = maxStartMs + 600;
+  _noteLoopTimer = setTimeout(() => {
+    _fillNoteQueue();
+    _scheduleNoteLoop();
+  }, loopMs);
+}
+
+window.addEventListener("notes:playback-start", (e) => {
+  clearTimeout(_noteLoopTimer);
+  const notes = Array.isArray(e.detail?.notes) ? e.detail.notes : [];
+  _notePlaybackList = notes.filter((note) => Number.isFinite(Number(note.midi)));
+  _fillNoteQueue();
+  _scheduleNoteLoop();
+
+  const bpm = e.detail?.bpm;
+  if (bpm > 0) {
+    clearInterval(_beatInterval);
+    _beatInterval = setInterval(() => _onBeat(false), Math.round(60000 / bpm));
+  }
 });
 
 window.addEventListener("notes:playback-stop", () => {
+  clearTimeout(_noteLoopTimer);
+  clearInterval(_beatInterval);
+  _beatInterval = null;
+  _notePlaybackList = [];
   notePlaybackQueue = [];
+});
+
+window.addEventListener("song:final-start", (e) => {
+  clearTimeout(_noteLoopTimer);
+  _notePlaybackList = [];
+  notePlaybackQueue = [];
+  clearInterval(_beatInterval);
+  const bpm = e.detail?.bpm || 120;
+  _beatInterval = setInterval(() => _onBeat(true), Math.round(60000 / bpm));
+});
+
+window.addEventListener("song:final-stop", () => {
+  clearInterval(_beatInterval);
+  _beatInterval = null;
 });
 
 window.addEventListener("instrument:add", (e) => {
@@ -930,6 +996,38 @@ function animate() {
     _scanPhase += 0.003;
     _scanTarget.position.x = Math.sin(_scanPhase) * 4.5;
     _scanTarget.position.z = -3 + Math.cos(_scanPhase * 0.7) * 1.5;
+  }
+
+  // Beat decay effects
+  if (_beatDecay > 0.005) {
+    _beatDecay  *= 0.84;
+    _cameraShake *= 0.80;
+    _floorPulse  *= 0.88;
+
+    if (_curtainsOpen) {
+      for (const l of _revealLights) l.intensity = 200 + _beatDecay * 420;
+      _scanLight.intensity = 80 + _beatDecay * 200;
+    }
+    camera.position.y = 3.5 + Math.sin(now * 0.05) * _cameraShake;
+    if (_floorMesh) _floorMesh.material.emissiveIntensity = 0.18 + _floorPulse * 0.38;
+    for (const inst of instruments) {
+      if (inst.outer.userData.beatBob > 0.002) {
+        inst.outer.userData.beatBob *= 0.80;
+        inst.outer.position.y = inst.outer.userData.baseY + inst.outer.userData.beatBob;
+      }
+    }
+  } else if (_beatDecay > 0) {
+    _beatDecay = 0;
+    camera.position.y = 3.5;
+    if (_floorMesh) _floorMesh.material.emissiveIntensity = 0.18;
+    if (_curtainsOpen) {
+      for (const l of _revealLights) l.intensity = 200;
+      _scanLight.intensity = 80;
+    }
+    for (const inst of instruments) {
+      inst.outer.position.y = inst.outer.userData.baseY;
+      inst.outer.userData.beatBob = 0;
+    }
   }
 
   renderer.render(scene, camera);
