@@ -42,6 +42,7 @@ let activeTrackId = null;
 let isRecording   = false;
 let pollHandle    = null;
 let renderStarted = false;
+const trackNotes  = {};
 
 // ---------------------------------------------------------------------------
 // DOM refs
@@ -84,14 +85,22 @@ async function boot() {
   }
 
   // ── Backend session ───────────────────────────────────────────────────
+  let sessionData = null;
   try {
-    await fetch("/api/session/start", {
+    const resp = await fetch("/api/session/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: SESSION_ID, mood: "upbeat" }),
     });
+    sessionData = await resp.json();
   } catch (err) {
     console.warn("[panel] session/start failed:", err);
+  }
+
+  if (sessionData?.tracks?.length) {
+    for (const track of sessionData.tracks) {
+      registerTrackNotes(track.id, track.notes ?? []);
+    }
   }
 
   // ── Populate 3D scene with default instruments ────────────────────────
@@ -230,6 +239,7 @@ function finishRecording(trackId, notes, error) {
   $noteSub.textContent = `${notes.length} note${notes.length !== 1 ? "s" : ""} detected`;
   $note.textContent    = notes.length ? midiToName(notes[0].midi) : "—";
   renderNotes(notes);
+  registerTrackNotes(trackId, notes);
 
   const t = tracks.find(x => x.id === trackId);
   showToast(`${t?.name ?? trackId} recorded — ${notes.length} notes`);
@@ -268,6 +278,32 @@ function clearNotesList() {
   $notesLabel.textContent = "No notes yet";
 }
 
+function normalizeTrackNotes(notes) {
+  return (notes ?? []).map((n) => ({
+    midi: Number(n.midi),
+    startMs: Number(n.start_ms ?? n.startMs ?? 0),
+    durationMs: Number(n.duration_ms ?? n.durationMs ?? 0),
+  })).filter((n) => Number.isFinite(n.midi));
+}
+
+function registerTrackNotes(trackId, notes) {
+  const normalized = normalizeTrackNotes(notes);
+  trackNotes[trackId] = normalized;
+  window.dispatchEvent(new CustomEvent("notes:track-ready", {
+    detail: { trackId, notes: normalized },
+  }));
+}
+
+function buildPlaybackNotes() {
+  return Object.keys(_conductNodes).flatMap((trackId) =>
+    (trackNotes[trackId] ?? []).map((note) => ({
+      trackId,
+      midi: note.midi,
+      startMs: note.startMs,
+    })),
+  );
+}
+
 function midiToName(midi) {
   const N = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
   return midi != null ? N[midi % 12] + Math.floor(midi / 12 - 1) : "—";
@@ -281,6 +317,7 @@ async function refreshTrackStatus(trackId) {
     const data = await fetch(`/api/tracks/${trackId}/hum/status`).then((r) => r.json());
     if (data.done && data.notes?.length) {
       renderNotes(data.notes);
+      registerTrackNotes(trackId, data.notes);
       $note.textContent    = midiToName(data.notes[0].midi);
       $noteSub.textContent = `${data.notes.length} notes detected`;
       $sections.querySelector(`[data-track-id="${trackId}"]`)?.classList.add("done");
@@ -291,6 +328,7 @@ async function refreshTrackStatus(trackId) {
 function clearCurrentTrack() {
   if (!activeTrackId) return;
   clearNotesList();
+  registerTrackNotes(activeTrackId, []);
   $note.textContent    = "—";
   $noteSub.textContent = "Ready to record";
   $sections.querySelector(`[data-track-id="${activeTrackId}"]`)?.classList.remove("done");
@@ -352,11 +390,32 @@ function onRenderDone() {
 // Conduct Mode  (browser-side Web Audio API)
 // ---------------------------------------------------------------------------
 
+// Review mode (one stem at a time before full conduct)
+let _reviewStems       = [];     // [{...stem, buffer}]
+let _reviewIdx         = 0;
+let _reviewCtx         = null;
+let _reviewSource      = null;
+let _inReviewMode      = false;
+let _reviewRerecording = false;
+
 let _conductCtx          = null;
 let _conductNodes        = {};    // track_id → { buffer, gainNode, sourceNode, volume }
 let _inConductMode       = false;
 let _conductHoveredKind  = null;  // instrument currently under finger
 let _conductRerecording  = false; // re-hum in progress
+
+// Effects phase
+let _inEffectsMode  = false;
+let _effectsParam   = "pitch";   // "pitch" | "tempo"
+let _effectsPitch   = 0;         // semitones
+let _effectsTempo   = 1.0;       // multiplier
+let _effectsCtx     = null;
+let _effectsSource  = null;
+let _effectsMixing  = false;
+
+// Lyrics phase
+let _inLyricsMode   = false;
+let _lyricsText     = "";
 
 async function launchConduct() {
   let data;
@@ -374,7 +433,7 @@ async function launchConduct() {
   }
   const stems = data.stems ?? [];
   if (!stems.length) { showToast("No stems found — render first"); return; }
-  await _enterConductMode(stems);
+  await _enterReviewMode(stems);
 }
 
 async function _enterConductMode(stems) {
@@ -444,6 +503,10 @@ function _startStemSource(trackId) {
 
 function _playAllStems() {
   if (_conductCtx.state === "suspended") _conductCtx.resume();
+  const playbackNotes = buildPlaybackNotes();
+  window.dispatchEvent(new CustomEvent("notes:playback-start", {
+    detail: { notes: playbackNotes },
+  }));
   Object.keys(_conductNodes).forEach(_startStemSource);
   Object.keys(_conductNodes).forEach(tid =>
     window.dispatchEvent(new CustomEvent("conduct:volume", { detail: { kind: tid, volume: _conductNodes[tid].volume } }))
@@ -473,9 +536,13 @@ function _toggleConductPause() {
   const btn = document.getElementById("btn-c-pause");
   if (_conductCtx.state === "running") {
     _conductCtx.suspend();
+    window.dispatchEvent(new CustomEvent("notes:playback-stop"));
     if (btn) btn.textContent = "▶ Resume";
   } else {
     _conductCtx.resume();
+    window.dispatchEvent(new CustomEvent("notes:playback-start", {
+      detail: { notes: buildPlaybackNotes() },
+    }));
     if (btn) btn.textContent = "⏸ Pause";
   }
 }
@@ -546,8 +613,398 @@ async function _reloadAllStems() {
   }
 }
 
-// Both hands thumbs-up: stop MediaPipe, free camera, lock the composition
+// ---------------------------------------------------------------------------
+// Review Mode  (one stem at a time, thumbs-up advances, open-palm re-hums)
+// ---------------------------------------------------------------------------
+
+async function _enterReviewMode(stems) {
+  _inReviewMode  = true;
+  _inConductMode = false;
+  _reviewStems   = stems;
+  _reviewIdx     = 0;
+
+  $panel.classList.remove("collapsed");
+  $title.textContent = "Review Instruments";
+  $sub.textContent   = "Loading stems…";
+
+  document.querySelector(".record").style.display     = "none";
+  document.querySelector(".notes-wrap").style.display = "none";
+
+  $sections.innerHTML = "";
+  for (const s of stems) {
+    const row = document.createElement("div");
+    row.className       = "conduct-row";
+    row.dataset.trackId = s.track_id;
+    row.innerHTML = `<span class="conduct-name">${s.name}</span>
+      <div class="conduct-bar"><div class="conduct-fill" style="width:100%"></div></div>`;
+    $sections.appendChild(row);
+  }
+
+  document.querySelector(".footer").innerHTML = `
+    <button class="btn" id="btn-r-rehum">🎙 Re-hum</button>
+    <button class="btn primary" id="btn-r-approve">👍👍 Approve</button>
+  `;
+
+  _reviewCtx = new AudioContext();
+
+  await Promise.all(stems.map(async (s) => {
+    try {
+      const ab = await fetch(s.url).then(r => r.arrayBuffer());
+      s.buffer = await _reviewCtx.decodeAudioData(ab);
+    } catch (e) { console.warn("[review] load failed:", s.track_id, e); }
+  }));
+
+  document.getElementById("btn-r-approve").addEventListener("click", _reviewApprove);
+  document.getElementById("btn-r-rehum").addEventListener("click", () => _rerecordInReview());
+
+  _playCurrentReviewStem();
+}
+
+function _playCurrentReviewStem() {
+  if (_reviewSource) { try { _reviewSource.stop(); } catch (_) {} }
+  _reviewSource = null;
+
+  const s = _reviewStems[_reviewIdx];
+  if (!s?.buffer) { $sub.textContent = "Stem not loaded — try re-humming"; return; }
+
+  if (_reviewCtx.state === "suspended") _reviewCtx.resume();
+
+  const gain = _reviewCtx.createGain();
+  gain.gain.value = 1.0;
+  gain.connect(_reviewCtx.destination);
+
+  _reviewSource        = _reviewCtx.createBufferSource();
+  _reviewSource.buffer = s.buffer;
+  _reviewSource.loop   = true;
+  _reviewSource.connect(gain);
+  _reviewSource.start(0);
+
+  document.querySelectorAll(".conduct-row").forEach((r, i) =>
+    r.classList.toggle("pointed", i === _reviewIdx));
+
+  $title.textContent = `Review: ${s.name}`;
+  $sub.textContent   = `${_reviewIdx + 1} of ${_reviewStems.length} — 👍👍 both thumbs to approve · ✋ re-hum`;
+}
+
+function _reviewApprove() {
+  if (_reviewRerecording) return;
+  if (_reviewSource) { try { _reviewSource.stop(); } catch (_) {} }
+  _reviewSource = null;
+
+  const rows = document.querySelectorAll(".conduct-row");
+  if (rows[_reviewIdx]) rows[_reviewIdx].classList.add("reviewed");
+  _reviewIdx++;
+
+  if (_reviewIdx >= _reviewStems.length) {
+    _transitionReviewToConduct();
+  } else {
+    _playCurrentReviewStem();
+  }
+}
+
+async function _rerecordInReview() {
+  if (_reviewRerecording) return;
+  _reviewRerecording = true;
+
+  if (_reviewSource) { try { _reviewSource.stop(); } catch (_) {} }
+  _reviewSource = null;
+
+  const s = _reviewStems[_reviewIdx];
+  $sub.textContent = `🎙 Humming ${s.name}… ${HUM_SECONDS}s`;
+
+  try {
+    await fetch(`/api/tracks/${s.track_id}/hum?seconds=${HUM_SECONDS}`, { method: "POST" });
+    await new Promise((resolve, reject) => {
+      const h = setInterval(async () => {
+        const d = await fetch(`/api/tracks/${s.track_id}/hum/status`).then(r => r.json());
+        if (!d.recording && (d.done || d.error)) {
+          clearInterval(h);
+          d.error ? reject(new Error(d.error)) : resolve(d);
+        }
+      }, 500);
+    });
+
+    $sub.textContent = "Re-rendering…";
+    renderStarted = false;
+    await fetch("/api/render", { method: "POST" });
+    await new Promise((resolve, reject) => {
+      const h = setInterval(async () => {
+        const d = await fetch("/api/render/status").then(r => r.json());
+        if (d.done)  { clearInterval(h); resolve(); }
+        if (d.error) { clearInterval(h); reject(new Error(d.error)); }
+      }, 2000);
+    });
+
+    for (const stem of _reviewStems) {
+      const ab = await fetch(`/api/stems/${stem.track_id}?t=${Date.now()}`).then(r => r.arrayBuffer());
+      stem.buffer = await _reviewCtx.decodeAudioData(ab);
+    }
+
+    showToast(`✓ ${s.name} updated!`);
+    _playCurrentReviewStem();
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+    _playCurrentReviewStem();
+  } finally {
+    _reviewRerecording = false;
+  }
+}
+
+async function _transitionReviewToConduct() {
+  _conductCtx   = _reviewCtx;
+  _conductNodes = {};
+  for (const s of _reviewStems) {
+    _conductNodes[s.track_id] = { buffer: s.buffer, gainNode: null, sourceNode: null, volume: 1.0 };
+  }
+
+  _inReviewMode  = false;
+  _inConductMode = true;
+
+  $title.textContent = "Conducting";
+  $sub.textContent   = "Point at instrument — raise hand for volume";
+
+  $sections.innerHTML = "";
+  for (const s of _reviewStems) {
+    const row = document.createElement("div");
+    row.className       = "conduct-row";
+    row.dataset.trackId = s.track_id;
+    row.innerHTML = `<span class="conduct-name">${s.name}</span>
+      <div class="conduct-bar"><div class="conduct-fill" style="width:100%"></div></div>
+      <button class="conduct-solo" data-tid="${s.track_id}" title="Solo 3 s">▶</button>`;
+    $sections.appendChild(row);
+  }
+
+  document.querySelector(".footer").innerHTML = `
+    <button class="btn" id="btn-c-pause">⏸ Pause</button>
+    <button class="btn primary" id="btn-c-play">▶ Play All</button>
+  `;
+
+  document.querySelectorAll(".conduct-solo").forEach(btn =>
+    btn.addEventListener("click", () => _soloStem(btn.dataset.tid)));
+  document.getElementById("btn-c-play").addEventListener("click",  _playAllStems);
+  document.getElementById("btn-c-pause").addEventListener("click", _toggleConductPause);
+
+  showToast("✓ All approved — now conducting!");
+  setTimeout(_playAllStems, 300);
+}
+
+// Both hands thumbs-up: lock conduct, keep camera/gestures alive for effects phase
 function _finalizeConduct() {
+  _inConductMode = false;
+
+  // Stop all conduct sources (effects phase will play master.wav instead)
+  Object.values(_conductNodes).forEach(n => {
+    if (n.sourceNode) { try { n.sourceNode.stop(); } catch (_) {} }
+  });
+
+  showToast("👍👍 Locked — entering effects room!");
+  _enterEffectsPhase();
+}
+
+// ---------------------------------------------------------------------------
+// Effects Phase  (pitch / tempo control via palm rotation)
+// ---------------------------------------------------------------------------
+
+async function _enterEffectsPhase() {
+  _inEffectsMode = true;
+  _effectsPitch  = 0;
+  _effectsTempo  = 1.0;
+  _effectsParam  = "pitch";
+
+  $panel.classList.remove("collapsed");
+  $title.textContent = "Fine-tune";
+  $sub.textContent   = "Mixing master…";
+
+  $sections.innerHTML = `
+    <div class="fx-row" id="fx-pitch">
+      <span class="fx-label">Pitch</span>
+      <span class="fx-value" id="fx-pitch-val">±0 st</span>
+    </div>
+    <div class="fx-row" id="fx-tempo">
+      <span class="fx-label">Tempo</span>
+      <span class="fx-value" id="fx-tempo-val">100%</span>
+    </div>
+    <p class="fx-hint">Rotate open palm · Fist = switch param · ✋ = preview · 👍👍 = next</p>
+  `;
+  _updateFxUI();
+
+  document.querySelector(".footer").innerHTML = `
+    <button class="btn" id="btn-fx-switch">⇄ Switch</button>
+    <button class="btn primary" id="btn-fx-preview">✋ Preview</button>
+  `;
+  document.getElementById("btn-fx-switch").addEventListener("click", _switchFxParam);
+  document.getElementById("btn-fx-preview").addEventListener("click", _previewMaster);
+
+  try {
+    _effectsCtx = new AudioContext();
+    await _previewMaster();
+  } catch (err) {
+    showToast(`Effects init error: ${err.message}`);
+    $sub.textContent = "Error — try ✋ again";
+  }
+}
+
+function _updateFxUI() {
+  document.getElementById("fx-pitch")?.classList.toggle("fx-active", _effectsParam === "pitch");
+  document.getElementById("fx-tempo")?.classList.toggle("fx-active", _effectsParam === "tempo");
+  const pv = document.getElementById("fx-pitch-val");
+  const tv = document.getElementById("fx-tempo-val");
+  if (pv) pv.textContent = `${_effectsPitch >= 0 ? "+" : ""}${_effectsPitch.toFixed(1)} st`;
+  if (tv) tv.textContent = `${Math.round(_effectsTempo * 100)}%`;
+}
+
+function _switchFxParam() {
+  _effectsParam = _effectsParam === "pitch" ? "tempo" : "pitch";
+  _updateFxUI();
+  showToast(_effectsParam === "pitch" ? "Adjusting Pitch" : "Adjusting Tempo");
+}
+
+async function _previewMaster() {
+  if (_effectsMixing) return;
+  _effectsMixing = true;
+  $sub.textContent = "Mixing…";
+
+  if (_effectsSource) { try { _effectsSource.stop(); } catch (_) {} }
+  _effectsSource = null;
+
+  try {
+    const resp = await fetch(`/api/master?pitch=${_effectsPitch.toFixed(2)}&tempo=${_effectsTempo.toFixed(3)}`, { method: "POST" });
+    if (!resp.ok) throw new Error("Mix request failed");
+
+    await new Promise((resolve, reject) => {
+      const h = setInterval(async () => {
+        const d = await fetch("/api/master/status").then(r => r.json());
+        if (d.done)  { clearInterval(h); resolve(); }
+        if (d.error) { clearInterval(h); reject(new Error(d.error)); }
+      }, 600);
+    });
+
+    const ab  = await fetch(`/api/master/file?t=${Date.now()}`).then(r => r.arrayBuffer());
+    const buf = await _effectsCtx.decodeAudioData(ab);
+
+    if (_effectsCtx.state === "suspended") _effectsCtx.resume();
+    const src = _effectsCtx.createBufferSource();
+    src.buffer = buf;
+    src.loop   = true;
+    src.connect(_effectsCtx.destination);
+    src.start(0);
+    _effectsSource = src;
+
+    $sub.textContent = "Rotate palm to adjust · ✋ re-preview · 👍👍 lyrics";
+  } catch (err) {
+    showToast(`Mix error: ${err.message}`);
+    $sub.textContent = "Error — try ✋ again";
+  } finally {
+    _effectsMixing = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AI Finalize  (master.wav → MusicGen melody conditioning → final.wav)
+// ---------------------------------------------------------------------------
+
+async function _finalizeWithAI() {
+  if (_effectsSource) { try { _effectsSource.stop(); } catch (_) {} }
+  _effectsSource = null;
+
+  $title.textContent = "Polishing…";
+  $sub.textContent   = "Sending to AI — making a real song…";
+  $sections.innerHTML = `<p class="fx-hint">MusicGen is creating a cohesive full-band arrangement from your melody.<br><br>This takes about 30 seconds…</p>`;
+  document.querySelector(".footer").innerHTML = "";
+
+  try {
+    const resp = await fetch("/api/finalize", { method: "POST" });
+    if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail ?? "Finalize failed");
+
+    await new Promise((resolve, reject) => {
+      const h = setInterval(async () => {
+        const d = await fetch("/api/finalize/status").then(r => r.json());
+        if (d.done)  { clearInterval(h); resolve(); }
+        if (d.error) { clearInterval(h); reject(new Error(d.error)); }
+      }, 2000);
+    });
+
+    // Play the finalized result
+    const ab  = await fetch(`/api/finalize/file?t=${Date.now()}`).then(r => r.arrayBuffer());
+    const buf = await _effectsCtx.decodeAudioData(ab);
+    if (_effectsCtx.state === "suspended") _effectsCtx.resume();
+    const src = _effectsCtx.createBufferSource();
+    src.buffer = buf; src.loop = true;
+    src.connect(_effectsCtx.destination);
+    src.start(0);
+    _effectsSource = src;
+
+    showToast("✓ Song polished!");
+    _enterLyricsPhase();
+  } catch (err) {
+    showToast(`Polish failed: ${err.message} — using master as-is`);
+    _enterLyricsPhase();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lyrics Phase
+// ---------------------------------------------------------------------------
+
+async function _enterLyricsPhase() {
+  _inEffectsMode = false;
+  _inLyricsMode  = true;
+  _lyricsText    = "";
+
+  $title.textContent = "Add Lyrics?";
+  $sub.textContent   = "👍👍 speak lyrics · ✊ skip & export";
+
+  $sections.innerHTML = `
+    <p class="fx-hint">Hold both thumbs up and speak your lyrics.<br>
+    The music will keep playing while you talk.<br><br>
+    Make a fist to skip and just download the track.</p>
+  `;
+
+  document.querySelector(".footer").innerHTML = `
+    <button class="btn" id="btn-skip-lyrics">✊ Skip</button>
+    <button class="btn primary" id="btn-speak-lyrics">🎙 Speak Lyrics</button>
+  `;
+  document.getElementById("btn-skip-lyrics").addEventListener("click", () => _exportFinal());
+  document.getElementById("btn-speak-lyrics").addEventListener("click", _captureLyrics);
+}
+
+function _captureLyrics() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { showToast("Speech not supported — exporting as-is"); _exportFinal(); return; }
+
+  $sub.textContent = "🎙 Listening… speak your lyrics";
+  document.querySelector(".footer").innerHTML = `<button class="btn primary" id="btn-stop-lyrics">Done ✓</button>`;
+
+  const rec = new SR();
+  rec.continuous     = true;
+  rec.interimResults = true;
+  rec.lang           = "en-US";
+
+  let final = "";
+  rec.onresult = (e) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) final += e.results[i][0].transcript + " ";
+      else interim = e.results[i][0].transcript;
+    }
+    _lyricsText = final;
+    $sections.innerHTML = `<p class="fx-lyrics">${final}<span style="opacity:0.5">${interim}</span></p>`;
+  };
+
+  rec.onerror = () => { _exportFinal(); };
+  rec.start();
+
+  document.getElementById("btn-stop-lyrics").addEventListener("click", () => {
+    rec.stop();
+    _exportFinal();
+  });
+}
+
+function _exportFinal() {
+  if (_effectsSource) { try { _effectsSource.stop(); } catch (_) {} }
+  _inLyricsMode = false;
+
+  // Now that all gesture interaction is done, free the camera
   stopGestures();
   const camSrc = document.getElementById("gesture-cam");
   if (camSrc?.srcObject) {
@@ -556,16 +1013,35 @@ function _finalizeConduct() {
   }
   document.getElementById("cam-preview").style.display = "none";
 
-  $title.textContent = "Composition Locked!";
-  $sub.textContent   = "Camera is free. Stems are still playing.";
-  showToast("👍👍 Composition locked — camera released!");
+  $title.textContent = "All Done! 🎉";
+  $sub.textContent   = "Your composition is downloading…";
+
+  if (_lyricsText.trim()) {
+    $sections.innerHTML = `
+      <p class="fx-hint" style="color:rgba(255,255,255,0.7)">Lyrics captured:</p>
+      <p class="fx-lyrics">${_lyricsText}</p>
+    `;
+    // Download lyrics as text file
+    const lyricBlob = new Blob([_lyricsText], { type: "text/plain" });
+    const lyricUrl  = URL.createObjectURL(lyricBlob);
+    const la = document.createElement("a");
+    la.href = lyricUrl; la.download = "lyrics.txt"; la.click();
+    URL.revokeObjectURL(lyricUrl);
+  } else {
+    $sections.innerHTML = "";
+  }
+
+  // Download final WAV (AI-polished, or master if finalize wasn't run)
+  const a = document.createElement("a");
+  a.href = `/api/finalize/file?t=${Date.now()}`;
+  a.download = "composition_final.wav";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 
   document.querySelector(".footer").innerHTML = `
-    <button class="btn" id="btn-c-pause">⏸ Pause</button>
-    <button class="btn primary" id="btn-c-done">Done ✓</button>
+    <button class="btn primary" onclick="location.reload()">Start Over 🔄</button>
   `;
-  document.getElementById("btn-c-pause").addEventListener("click", _toggleConductPause);
-  document.getElementById("btn-c-done").addEventListener("click", () => showToast("Export coming soon!"));
 }
 
 // Upload the exported mix and redirect to the web app's publish page.
@@ -665,8 +1141,10 @@ window.addEventListener("instrument:gesture-selected", (e) => {
   selectTrack(e.detail.kind);
 });
 
-// Open palm → re-hum hovered instrument (conduct) or start recording (setup)
+// Open palm → re-hum current (review) / preview master (effects) / conduct pause / record (setup)
 window.addEventListener("gesture:open-palm", () => {
+  if (_inReviewMode)  { if (!_reviewRerecording) _rerecordInReview(); return; }
+  if (_inEffectsMode) { _previewMaster(); return; }
   if (_inConductMode) {
     if (_conductHoveredKind && !_conductRerecording) {
       _rerecordInConduct(_conductHoveredKind);
@@ -691,18 +1169,45 @@ window.addEventListener("instrument:hover", (e) => {
     r.classList.toggle("pointed", r.dataset.trackId === e.detail.kind));
 });
 
-// Both hands thumbs-up → finalize and free the camera
+// Both hands thumbs-up → approve review / finalize conduct / AI polish / done
 window.addEventListener("gesture:both-thumbs-up", () => {
-  if (_inConductMode) _finalizeConduct();
+  if (_inReviewMode) {
+    _reviewApprove();
+  } else if (_inEffectsMode) {
+    _inEffectsMode = false;
+    _finalizeWithAI();
+  } else if (_inConductMode) {
+    _finalizeConduct();
+  }
 });
 
-// Fist hold → voice add instrument
+// Palm rotate → adjust active effects parameter
+window.addEventListener("gesture:palm-rotate", (e) => {
+  if (!_inEffectsMode) return;
+  const step = e.detail.delta;
+  if (_effectsParam === "pitch") {
+    _effectsPitch = Math.max(-6, Math.min(6, _effectsPitch + step * 8));
+  } else {
+    _effectsTempo = Math.max(0.5, Math.min(2.0, _effectsTempo + step * 0.5));
+  }
+  _updateFxUI();
+});
+
+// Fist (one-shot) → switch fx param (effects mode) or skip lyrics (lyrics mode)
+window.addEventListener("gesture:fist", () => {
+  if (_inEffectsMode) { _switchFxParam(); return; }
+  if (_inLyricsMode)  { _exportFinal();   return; }
+});
+
+// Fist hold → voice add instrument (only in setup mode)
 window.addEventListener("gesture:fist-hold", () => {
+  if (_inEffectsMode || _inLyricsMode || _inReviewMode || _inConductMode) return;
   startVoiceInstrumentAdd();
 });
 
-// Thumbs-up → render or conduct
+// Thumbs-up → launch conduct / start render  (NOT used during review — use both-thumbs)
 window.addEventListener("gesture:thumbs-up", () => {
+  if (_inReviewMode) return;
   const conductBtn = document.querySelector(".footer button:last-child");
   if (conductBtn?.textContent.includes("Conduct")) {
     launchConduct();

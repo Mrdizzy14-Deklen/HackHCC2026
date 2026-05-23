@@ -39,6 +39,9 @@ let _curtainFired    = false;
 let _fistHoldFired   = false;
 let _bothThumbsLatch = false;
 
+// Palm rotation
+let _palmAngle = null;
+
 // Dwell
 let _dwellCell  = null;
 let _dwellStart = 0;
@@ -137,6 +140,11 @@ function _toNDC(lm) {
   };
 }
 
+// Palm orientation angle (wrist→middle-finger-base vector)
+function _getPalmAngle(lm) {
+  return Math.atan2(lm[9].y - lm[0].y, lm[9].x - lm[0].x);
+}
+
 // ---------------------------------------------------------------------------
 // Main processing
 // ---------------------------------------------------------------------------
@@ -218,12 +226,21 @@ function _process(results, now) {
     _fistLatch = false; _fistHoldFired = false; _fistStart = 0;
   }
 
-  // ── Open palm (one-shot) ──
+  // ── Open palm (one-shot + rotation tracking) ──
   if (g === "open-palm") {
     if (!_palmLatch) { _palmLatch = true; _emit("open-palm"); }
+    const angle = _getPalmAngle(lm);
+    if (_palmAngle !== null) {
+      let delta = angle - _palmAngle;
+      if (delta >  Math.PI) delta -= 2 * Math.PI;
+      if (delta < -Math.PI) delta += 2 * Math.PI;
+      if (Math.abs(delta) > 0.025) _emit("palm-rotate", { delta: -delta });
+    }
+    _palmAngle   = angle;
     _thumbsLatch = false;
   } else {
-    _palmLatch = false;
+    _palmLatch  = false;
+    _palmAngle  = null;
   }
 
   // ── Thumbs-up (one-shot) ──

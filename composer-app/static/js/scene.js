@@ -69,6 +69,71 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
+const NOTE_TEXTURE_CACHE = new Map();
+const ACTIVE_NOTE_SPRITES = [];
+const NOTE_TRACK_COLORS = {
+  trumpet: 0xffd166,
+  violin:   0x8fd8ff,
+  flute:    0x98f7c5,
+  piano:    0xffd1ff,
+  drums:    0xffb8a8,
+  default:  0xffffff,
+};
+const NOTE_LIFETIME_MS = 1600;
+const NOTE_EMIT_OFFSET = new THREE.Vector3(0, 1.15, 0.25);
+const NOTE_ICON_PATH = "/static/pngtree-neon-music-note-icon-png-image_20002866.png";
+let notePlaybackQueue = [];
+let noteLastFrame = performance.now();
+const instrumentRefs = new Map();
+
+function getInstrumentWorldPosition(kind) {
+  const ref = instrumentRefs.get(kind);
+  if (!ref) {
+    return new THREE.Vector3(0, 1.0, -3.0);
+  }
+  const pos = new THREE.Vector3();
+  ref.getWorldPosition(pos);
+  return pos;
+}
+
+function prewarmNoteTextures() {
+  if (NOTE_TEXTURE_CACHE.has("icon")) return;
+
+  const texture = new THREE.TextureLoader().load(NOTE_ICON_PATH);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  NOTE_TEXTURE_CACHE.set("icon", texture);
+}
+
+function spawnNote(trackId) {
+  if (!NOTE_TEXTURE_CACHE.has("icon")) {
+    prewarmNoteTextures();
+  }
+
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: NOTE_TEXTURE_CACHE.get("icon"),
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      color: NOTE_TRACK_COLORS[trackId] ?? NOTE_TRACK_COLORS.default,
+    }),
+  );
+
+  const worldPos = getInstrumentWorldPosition(trackId);
+  sprite.position.copy(worldPos.clone().add(NOTE_EMIT_OFFSET));
+  sprite.scale.set(0.65, 0.65, 1);
+  sprite.userData = {
+    bornAt: performance.now(),
+    driftX: (Math.random() - 0.5) * 0.22,
+    driftZ: (Math.random() - 0.5) * 0.22,
+  };
+
+  scene.add(sprite);
+  ACTIVE_NOTE_SPRITES.push(sprite);
+}
+
+prewarmNoteTextures();
 scene.add(new THREE.AmbientLight(0xfff5e0, 0.7));
 
 const keyLight = new THREE.DirectionalLight(0xfff0c8, 2.5);
@@ -303,6 +368,7 @@ function placeInstrument(
   }
 
   instruments.push({ outer, inner, baseYaw, targetYaw: baseYaw, currentYaw: baseYaw, kind });
+  if (kind) instrumentRefs.set(kind, outer);
   if (kind && spotLight) {
     if (!_kindLights[kind]) _kindLights[kind] = [];
     _kindLights[kind].push(spotLight);
@@ -457,6 +523,25 @@ loader.load("/static/yamaha_m1a_piano/scene.gltf", (gltf) => {
 
 
 // --- EVENT LISTENER ---
+window.addEventListener("notes:track-ready", (e) => {
+  prewarmNoteTextures(e.detail?.notes ?? []);
+});
+
+window.addEventListener("notes:playback-start", (e) => {
+  const notes = Array.isArray(e.detail?.notes) ? e.detail.notes : [];
+  notePlaybackQueue = notes
+    .filter((note) => Number.isFinite(Number(note.midi)))
+    .map((note) => ({
+      trackId: note.trackId,
+      midi: Number(note.midi),
+      dueAt: performance.now() + Math.max(0, Number(note.startMs ?? 0)),
+    }));
+});
+
+window.addEventListener("notes:playback-stop", () => {
+  notePlaybackQueue = [];
+});
+
 window.addEventListener("instrument:add", (e) => {
   const kind = (e.detail?.kind ?? "trumpet").toLowerCase();
   if (kind === "trumpet") addTrumpet();
@@ -586,6 +671,11 @@ window.addEventListener("resize", () => {
 
 function animate() {
   requestAnimationFrame(animate);
+
+  const now = performance.now();
+  const dt = Math.min(0.033, (now - noteLastFrame) / 1000);
+  noteLastFrame = now;
+
   for (const inst of instruments) {
     inst.currentYaw += (inst.targetYaw - inst.currentYaw) * 0.06;
     inst.inner.rotation.y = inst.currentYaw;
@@ -607,6 +697,30 @@ function animate() {
         m.material.emissiveIntensity = strength;
       }
     }
+  }
+
+  while (notePlaybackQueue.length && notePlaybackQueue[0].dueAt <= now) {
+    const queued = notePlaybackQueue.shift();
+    spawnNote(queued.trackId);
+  }
+
+  for (let i = ACTIVE_NOTE_SPRITES.length - 1; i >= 0; i--) {
+    const sprite = ACTIVE_NOTE_SPRITES[i];
+    const age = now - sprite.userData.bornAt;
+    const progress = Math.min(1, age / NOTE_LIFETIME_MS);
+
+    if (progress >= 1) {
+      scene.remove(sprite);
+      sprite.material.dispose();
+      ACTIVE_NOTE_SPRITES.splice(i, 1);
+      continue;
+    }
+
+    sprite.position.y += dt * 1.2;
+    sprite.position.x += sprite.userData.driftX * dt * 1.4;
+    sprite.position.z += sprite.userData.driftZ * dt * 1.4;
+    sprite.material.opacity = 1 - progress;
+    sprite.scale.setScalar(0.85 + progress * 0.25);
   }
 
   // Hover glow follows the instrument under the finger
