@@ -18,8 +18,8 @@ import {
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
 // ── Tuning ──────────────────────────────────────────────────────────────────
-const LOOP_MS        = 100;   // 10 fps detection — keeps CPU light
-const DWELL_MS       = 1000;  // ms to hold a point before dwell-select fires
+const LOOP_MS        = 66;    // ~15 fps detection — better responsiveness, still CPU-light
+const DWELL_MS       = 750;   // ms to hold a point before dwell-select fires
 const POINT_THR      = 40;    // grid cells for dwell stability
 const FIST_HOLD_MS   = 1500;  // ms to hold fist before voice is triggered
 const CURTAIN_DELAY  = 2500;  // ms after init before curtain gesture is live
@@ -45,6 +45,10 @@ let _dwellFired = false;
 
 // Fist hold
 let _fistStart  = 0;
+
+// Smoothed NDC for gesture:point — reduces scene raycaster jitter
+let _smoothX = 0, _smoothY = 0;
+const NDC_LERP = 0.4;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -172,7 +176,10 @@ function _process(results, now) {
 
   // ── Point ──
   if (g === "point") {
-    const pos = _toNDC(lm);
+    const raw = _toNDC(lm);
+    _smoothX += (raw.x - _smoothX) * NDC_LERP;
+    _smoothY += (raw.y - _smoothY) * NDC_LERP;
+    const pos = { x: _smoothX, y: _smoothY };
     _emit("point", pos);
 
     const cell = `${Math.round(pos.x * POINT_THR)},${Math.round(pos.y * POINT_THR)}`;

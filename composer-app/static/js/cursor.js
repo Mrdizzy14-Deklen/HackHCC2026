@@ -1,44 +1,54 @@
 /**
- * cursor.js — draws hand landmarks on a transparent overlay canvas
+ * cursor.js — smooth hand-landmark overlay at 60 fps
  *
- * Listens for gesture:landmarks events (dispatched by gestures.js every frame).
- * Shows fingertip dots, hand skeleton, index-finger cursor, dwell progress ring,
- * and a gesture label so the user can see exactly what the system detects.
+ * MediaPipe runs at ~15 fps; this file decouples rendering from detection by
+ * keeping a smoothed copy of landmarks that lerps toward the latest raw
+ * detection every animation frame. Result: fluid motion with no jitter.
+ *
+ * Dwell-ring progress is calculated from RAW positions so it stays in sync
+ * with the actual dwell-select logic in gestures.js.
  */
 
-const DWELL_MS   = 1000;   // must match gestures.js DWELL_MS
-const DWELL_GRID = 40;     // grid cells — must match POINT_THR in gestures.js
+const DWELL_MS   = 750;   // must match gestures.js DWELL_MS
+const DWELL_GRID = 40;    // must match POINT_THR in gestures.js
 
-// Landmark connections for a minimal hand skeleton
+const LERP       = 0.30;  // landmark smoothing factor per 60fps frame
+                           // lower = smoother but laggier; 0.30 is a good balance
+
 const SKELETON = [
-  [0,1],[1,2],[2,3],[3,4],        // thumb
-  [0,5],[5,6],[6,7],[7,8],        // index
-  [5,9],[9,10],[10,11],[11,12],   // middle
-  [9,13],[13,14],[14,15],[15,16], // ring
-  [13,17],[17,18],[18,19],[19,20],// pinky
-  [0,17],                         // palm edge
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17],
 ];
 
 const FINGERTIPS = [4, 8, 12, 16, 20];
 
 const GESTURE_LABELS = {
-  point:        "POINT",
-  fist:         "FIST",
-  "open-palm":  "PALM",
-  "thumbs-up":  "THUMBS UP",
-  other:        "",
-  none:         "",
+  point:       "POINT",
+  fist:        "FIST",
+  "open-palm": "PALM",
+  "thumbs-up": "THUMBS UP",
 };
 
-let _canvas  = null;
-let _ctx     = null;
-let _dw      = 0;
-let _dh      = 0;
-let _burstTs = 0;
+let _canvas = null;
+let _ctx    = null;
+let _dw = 0, _dh = 0;
 
-// Dwell tracking (mirrors gestures.js logic)
+// Raw data from gestures.js (updated at ~15 fps)
+let _rawHands   = [];
+let _rawGesture = "none";
+
+// Smoothed state (updated every rAF at ~60 fps)
+let _smoothHands = [];
+
+// Dwell tracking — mirrors gestures.js using RAW positions so the ring
+// progress always matches when gesture:dwell-select actually fires
 let _dwellCell  = null;
 let _dwellStart = 0;
+let _burstTs    = 0;
 
 export function initCursor() {
   _canvas = document.getElementById("gesture-cursor");
@@ -47,6 +57,7 @@ export function initCursor() {
   _resize();
   window.addEventListener("resize", _resize);
   window.addEventListener("gesture:landmarks", _onLandmarks);
+  requestAnimationFrame(_renderLoop);
 }
 
 function _resize() {
@@ -54,26 +65,53 @@ function _resize() {
   _dh = _canvas.height = window.innerHeight;
 }
 
-// Convert MediaPipe normalized [0,1] to screen pixels (mirror X for selfie)
+// Store raw landmarks — do NOT draw here
+function _onLandmarks(e) {
+  _rawHands   = e.detail.hands ?? [];
+  _rawGesture = e.detail.gesture ?? "none";
+}
+
+// 60 fps render loop: lerp smooth → raw, then draw
+function _renderLoop() {
+  requestAnimationFrame(_renderLoop);
+  _ctx.clearRect(0, 0, _dw, _dh);
+
+  if (_rawHands.length === 0) {
+    _smoothHands = [];
+    _dwellCell   = null;
+    _dwellStart  = 0;
+    return;
+  }
+
+  // Sync array length (hand appeared / disappeared)
+  if (_smoothHands.length !== _rawHands.length) {
+    _smoothHands = _rawHands.map(lm => lm.map(pt => ({ x: pt.x, y: pt.y, z: pt.z ?? 0 })));
+  } else {
+    for (let h = 0; h < _rawHands.length; h++) {
+      for (let i = 0; i < _rawHands[h].length; i++) {
+        const r = _rawHands[h][i];
+        const s = _smoothHands[h][i];
+        s.x += (r.x - s.x) * LERP;
+        s.y += (r.y - s.y) * LERP;
+        s.z  = (s.z ?? 0) + ((r.z ?? 0) - (s.z ?? 0)) * LERP;
+      }
+    }
+  }
+
+  for (let h = 0; h < _smoothHands.length; h++) {
+    _drawHand(_smoothHands[h], _rawHands[h], _rawGesture);
+  }
+}
+
+// _toScreen — convert MediaPipe [0,1] → pixels (mirror X)
 function _toScreen(lm) {
   return { x: (1 - lm.x) * _dw, y: lm.y * _dh };
 }
 
-function _onLandmarks(e) {
-  const { hands, gesture } = e.detail;
-  _ctx.clearRect(0, 0, _dw, _dh);
-  if (!hands.length) {
-    _dwellCell = null;
-    _dwellStart = 0;
-    return;
-  }
-  for (const lm of hands) _drawHand(lm, gesture);
-}
-
-function _drawHand(lm, gesture) {
+function _drawHand(lm, rawLm, gesture) {
   const pts = lm.map(_toScreen);
 
-  // ── Skeleton ─────────────────────────────────────────────────────────────
+  // ── Skeleton ──────────────────────────────────────────────────────────────
   _ctx.strokeStyle = "rgba(255,255,255,0.18)";
   _ctx.lineWidth   = 1.5;
   _ctx.lineCap     = "round";
@@ -84,109 +122,131 @@ function _drawHand(lm, gesture) {
     _ctx.stroke();
   }
 
-  // ── Fingertip dots ────────────────────────────────────────────────────────
+  // ── Fingertip dots ─────────────────────────────────────────────────────────
   for (const tip of FINGERTIPS) {
     const p = pts[tip];
     const isIndex = tip === 8;
     _ctx.beginPath();
-    _ctx.arc(p.x, p.y, isIndex ? 9 : 5, 0, Math.PI * 2);
-    _ctx.fillStyle = isIndex ? "rgba(100,255,150,0.9)" : "rgba(255,255,255,0.55)";
+    _ctx.arc(p.x, p.y, isIndex ? 10 : 5, 0, Math.PI * 2);
+    _ctx.fillStyle = isIndex ? "rgba(80,220,255,0.95)" : "rgba(255,255,255,0.45)";
     _ctx.fill();
 
-    // Glow on index tip
     if (isIndex) {
-      const grd = _ctx.createRadialGradient(p.x, p.y, 2, p.x, p.y, 22);
-      grd.addColorStop(0, "rgba(100,255,150,0.35)");
-      grd.addColorStop(1, "rgba(100,255,150,0)");
+      // Inner bright core
       _ctx.beginPath();
-      _ctx.arc(p.x, p.y, 22, 0, Math.PI * 2);
+      _ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      _ctx.fillStyle = "rgba(255,255,255,0.9)";
+      _ctx.fill();
+
+      // Outer soft glow
+      const grd = _ctx.createRadialGradient(p.x, p.y, 4, p.x, p.y, 26);
+      grd.addColorStop(0, "rgba(80,220,255,0.30)");
+      grd.addColorStop(1, "rgba(80,220,255,0)");
+      _ctx.beginPath();
+      _ctx.arc(p.x, p.y, 26, 0, Math.PI * 2);
       _ctx.fillStyle = grd;
       _ctx.fill();
     }
   }
 
-  // ── Open-palm glow at index fingertip ────────────────────────────────────
+  // ── Crosshair when pointing ────────────────────────────────────────────────
+  if (gesture === "point") {
+    const ip = pts[8];
+    const R  = 18;
+    const G  = 5;
+    _ctx.strokeStyle = "rgba(80,220,255,0.55)";
+    _ctx.lineWidth   = 1.5;
+    _ctx.setLineDash([3, 3]);
+    for (const [dx, dy] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+      _ctx.beginPath();
+      _ctx.moveTo(ip.x + dx * (R + G), ip.y + dy * (R + G));
+      _ctx.lineTo(ip.x + dx * (R + G + 8), ip.y + dy * (R + G + 8));
+      _ctx.stroke();
+    }
+    _ctx.setLineDash([]);
+  }
+
+  // ── Open-palm glow ─────────────────────────────────────────────────────────
   if (gesture === "open-palm") {
     const ip = pts[8];
     _ctx.beginPath();
-    _ctx.arc(ip.x, ip.y, 40, 0, Math.PI * 2);
-    _ctx.fillStyle = "rgba(255,255,255,0.08)";
+    _ctx.arc(ip.x, ip.y, 44, 0, Math.PI * 2);
+    _ctx.fillStyle = "rgba(255,255,255,0.07)";
     _ctx.fill();
   }
 
-  // ── Dwell ring at index fingertip ─────────────────────────────────────────
-  if (gesture === "point") {
+  // ── Dwell ring — uses RAW positions so it matches gestures.js exactly ──────
+  if (gesture === "point" && rawLm) {
     const ip  = pts[8];
-    // NDC cell for stability check (same grid as gestures.js uses)
-    const ndcX = (1 - lm[8].x) * 2 - 1;
-    const ndcY = -(lm[8].y * 2 - 1);
+    const ndcX = (1 - rawLm[8].x) * 2 - 1;
+    const ndcY = -(rawLm[8].y * 2 - 1);
     const cell = `${Math.round(ndcX * DWELL_GRID)},${Math.round(ndcY * DWELL_GRID)}`;
     const now  = performance.now();
 
     if (cell !== _dwellCell) {
       _dwellCell  = cell;
       _dwellStart = now;
+      _burstTs    = 0;
     }
 
     const elapsed  = now - _dwellStart;
     const progress = Math.min(elapsed / DWELL_MS, 1);
 
-    if (progress >= 1) {
-      _burstTs = performance.now();
-    }
+    if (progress >= 1 && !_burstTs) _burstTs = now;
 
     if (progress > 0.02) {
-      // Color shifts green → amber → white as ring fills
+      // Color: green → amber → white
       let r, g, b;
       if (progress <= 0.4) {
-        // green: rgba(100,255,150)
-        r = 100; g = 255; b = 150;
+        r = 80; g = 220; b = 255;
       } else if (progress <= 0.8) {
-        // lerp green → amber: rgba(255,200,80)
         const t = (progress - 0.4) / 0.4;
-        r = Math.round(100 + t * (255 - 100));
-        g = Math.round(255 + t * (200 - 255));
-        b = Math.round(150 + t * (80  - 150));
+        r = Math.round(80  + t * (255 - 80));
+        g = Math.round(220 + t * (200 - 220));
+        b = Math.round(255 + t * (80  - 255));
       } else {
-        // lerp amber → white: rgba(255,255,255)
         const t = (progress - 0.8) / 0.2;
         r = 255;
-        g = Math.round(200 + t * (255 - 200));
-        b = Math.round(80  + t * (255 - 80));
+        g = Math.round(200 + t * 55);
+        b = Math.round(80  + t * 175);
       }
-      const alpha = 0.5 + progress * 0.5;
+      const alpha = 0.55 + progress * 0.45;
 
       _ctx.beginPath();
       _ctx.arc(ip.x, ip.y, 18, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
       _ctx.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
-      _ctx.lineWidth   = 3;
+      _ctx.lineWidth   = 3.5;
       _ctx.lineCap     = "round";
       _ctx.stroke();
     }
 
     // Burst ring after dwell completes
-    const burstAge = performance.now() - _burstTs;
-    if (_burstTs && burstAge < 400) {
-      const burstP = burstAge / 400;
-      _ctx.beginPath();
-      _ctx.arc(ip.x, ip.y, 18 + burstP * 20, 0, Math.PI * 2);
-      _ctx.strokeStyle = `rgba(255,255,255,${(1 - burstP) * 0.7})`;
-      _ctx.lineWidth = 2;
-      _ctx.stroke();
+    if (_burstTs) {
+      const age  = now - _burstTs;
+      const burstP = age / 350;
+      if (burstP < 1) {
+        _ctx.beginPath();
+        _ctx.arc(ip.x, ip.y, 18 + burstP * 22, 0, Math.PI * 2);
+        _ctx.strokeStyle = `rgba(255,255,255,${(1 - burstP) * 0.75})`;
+        _ctx.lineWidth   = 2;
+        _ctx.stroke();
+      }
     }
   } else {
-    _dwellCell  = null;
-    _dwellStart = 0;
+    if (gesture !== "point") {
+      _dwellCell  = null;
+      _dwellStart = 0;
+    }
   }
 
-  // ── Gesture label near wrist ──────────────────────────────────────────────
+  // ── Gesture label near wrist ───────────────────────────────────────────────
   const label = GESTURE_LABELS[gesture] ?? "";
   if (label) {
     const w = pts[0];
-    _ctx.font         = "bold 11px Inter, sans-serif";
-    _ctx.textAlign    = "center";
+    _ctx.font          = "bold 11px Inter, sans-serif";
+    _ctx.textAlign     = "center";
     _ctx.letterSpacing = "0.1em";
-    _ctx.fillStyle    = "rgba(255,255,255,0.7)";
+    _ctx.fillStyle     = "rgba(255,255,255,0.65)";
     _ctx.fillText(label, w.x, w.y + 28);
     _ctx.letterSpacing = "0";
   }
