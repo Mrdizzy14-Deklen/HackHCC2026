@@ -13,5 +13,5 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/library/:path*", "/leaderboard/:path*"],
+  matcher: ["/library/:path*", "/leaderboard/:path*", "/publish/:path*"],
 };

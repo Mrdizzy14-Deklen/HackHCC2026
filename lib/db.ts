@@ -9,6 +9,7 @@ import {
   type Leader,
   type RankedConductor,
   type Trend,
+  type InstrumentKey,
 } from "./data";
 
 /**
@@ -133,4 +134,66 @@ export async function saveSong(id: string): Promise<{ saves: number }> {
     );
   if (!song) throw new Error("song not found");
   return { saves: song.saves ?? 0 };
+}
+
+export interface NewSong {
+  title: string;
+  composer: string;
+  composerHandle: string;
+  instr?: InstrumentKey;
+  audioId?: string | null;
+  duration?: string;
+  coverUrl?: string;
+}
+
+/**
+ * Publish a freshly conducted song: insert it into `songs` and make sure the
+ * composer exists as a conductor (so likes on it count toward the leaderboard).
+ */
+export async function createSong(input: NewSong): Promise<{ id: string }> {
+  if (!isDbConfigured()) throw new Error("DB not configured");
+  const db = await getDb();
+
+  const now = new Date();
+  const date = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
+
+  const doc = {
+    title: input.title,
+    titleEm: "",
+    composer: input.composer,
+    composerHandle: input.composerHandle,
+    date,
+    duration: input.duration || "—",
+    tag: "FINAL",
+    instr: input.instr || "clef",
+    live: false,
+    likes: 0,
+    saves: 0,
+    audioId: input.audioId ? new ObjectId(input.audioId) : null,
+    coverUrl: input.coverUrl,
+    createdAt: now,
+  };
+
+  const res = await db.collection("songs").insertOne(doc);
+
+  // Ensure the composer is on the leaderboard. New conductors start at 0 and
+  // climb as their songs get liked; existing ones just gain a piece.
+  const [first, ...rest] = input.composer.trim().split(/\s+/);
+  await db.collection("conductors").updateOne(
+    { handle: input.composerHandle },
+    {
+      $setOnInsert: {
+        name: first || input.composer,
+        nameEm: rest.join(" "),
+        score: 0,
+        weeks: 0,
+        trend: "flat" as Trend,
+        trendN: "NEW",
+      },
+      $inc: { pieces: 1 },
+    },
+    { upsert: true }
+  );
+
+  return { id: res.insertedId.toString() };
 }
