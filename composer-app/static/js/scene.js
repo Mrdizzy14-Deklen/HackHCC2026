@@ -2,8 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x09080c);  // deep cinematic dark
-
+scene.background = new THREE.Color(0x09080c);
 scene.fog = new THREE.FogExp2(0x09080c, 0.045);
 
 const camera = new THREE.PerspectiveCamera(
@@ -70,6 +69,71 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
+const NOTE_TEXTURE_CACHE = new Map();
+const ACTIVE_NOTE_SPRITES = [];
+const NOTE_TRACK_COLORS = {
+  trumpet: 0xffd166,
+  violin:   0x8fd8ff,
+  flute:    0x98f7c5,
+  piano:    0xffd1ff,
+  drums:    0xffb8a8,
+  default:  0xffffff,
+};
+const NOTE_LIFETIME_MS = 1600;
+const NOTE_EMIT_OFFSET = new THREE.Vector3(0, 1.15, 0.25);
+const NOTE_ICON_PATH = "/static/pngtree-neon-music-note-icon-png-image_20002866.png";
+let notePlaybackQueue = [];
+let noteLastFrame = performance.now();
+const instrumentRefs = new Map();
+
+function getInstrumentWorldPosition(kind) {
+  const ref = instrumentRefs.get(kind);
+  if (!ref) {
+    return new THREE.Vector3(0, 1.0, -3.0);
+  }
+  const pos = new THREE.Vector3();
+  ref.getWorldPosition(pos);
+  return pos;
+}
+
+function prewarmNoteTextures() {
+  if (NOTE_TEXTURE_CACHE.has("icon")) return;
+
+  const texture = new THREE.TextureLoader().load(NOTE_ICON_PATH);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  NOTE_TEXTURE_CACHE.set("icon", texture);
+}
+
+function spawnNote(trackId) {
+  if (!NOTE_TEXTURE_CACHE.has("icon")) {
+    prewarmNoteTextures();
+  }
+
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: NOTE_TEXTURE_CACHE.get("icon"),
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      color: NOTE_TRACK_COLORS[trackId] ?? NOTE_TRACK_COLORS.default,
+    }),
+  );
+
+  const worldPos = getInstrumentWorldPosition(trackId);
+  sprite.position.copy(worldPos.clone().add(NOTE_EMIT_OFFSET));
+  sprite.scale.set(0.65, 0.65, 1);
+  sprite.userData = {
+    bornAt: performance.now(),
+    driftX: (Math.random() - 0.5) * 0.22,
+    driftZ: (Math.random() - 0.5) * 0.22,
+  };
+
+  scene.add(sprite);
+  ACTIVE_NOTE_SPRITES.push(sprite);
+}
+
+prewarmNoteTextures();
 scene.add(new THREE.AmbientLight(0xfff5e0, 0.7));
 
 const keyLight = new THREE.DirectionalLight(0xfff0c8, 2.5);
@@ -108,21 +172,20 @@ function createStageWash(color, intensity, pos, targetPos) {
   return light;
 }
 
-createStageWash(0xffa040, 90,  { x: 0,  y: 10, z: 6  }, { x: 0,  y: 0, z: -2 });
-createStageWash(0x4060ff, 50,  { x: 0,  y: 8,  z: -9 }, { x: 0,  y: 0, z: 0  });
-createStageWash(0xff4090, 35,  { x: -9, y: 6,  z: 0  }, { x: -3, y: 0, z: -2 });
-createStageWash(0x00c8ff, 35,  { x: 9,  y: 6,  z: 0  }, { x: 3,  y: 0, z: -2 });
+createStageWash(0xffa040, 90,  { x: 0,  y: 10, z: 6  }, { x: 0,  y: 1.2, z: -2 });
+createStageWash(0xff4090, 35,  { x: -9, y: 6,  z: 0  }, { x: -3, y: 1.2, z: -2 });
+createStageWash(0x00c8ff, 35,  { x: 9,  y: 6,  z: 0  }, { x: 3,  y: 1.2, z: -2 });
 
 // Warm footlights — low-angle from pit edge for dramatic uplighting
 function createFootlight(x) {
   const fl = new THREE.SpotLight(0xffd580, 60);
-  fl.position.set(x, 0.4, 3.5);
+  fl.position.set(x, 2.2, 3.5);
   fl.angle   = Math.PI / 5;
   fl.penumbra = 0.6;
   fl.decay   = 1.8;
   fl.distance = 14;
   const ft = new THREE.Object3D();
-  ft.position.set(x * 0.4, 0, -1);
+  ft.position.set(x * 0.4, 1.2, -1);
   scene.add(ft);
   fl.target = ft;
   scene.add(fl);
@@ -199,7 +262,7 @@ buildOrchestraRisers();
 
 // Reflective stage floor — shows colored wash reflections
 (function addFloor() {
-  const geo = new THREE.PlaneGeometry(14, 14);
+  const geo = new THREE.PlaneGeometry(60, 60);
   const mat = new THREE.MeshStandardMaterial({ color: 0x0c0a0f, roughness: 0.08, metalness: 0.45 });
   const floor = new THREE.Mesh(geo, mat);
   floor.rotation.x = -Math.PI / 2;
@@ -305,6 +368,7 @@ function placeInstrument(
   }
 
   instruments.push({ outer, inner, baseYaw, targetYaw: baseYaw, currentYaw: baseYaw, kind });
+  if (kind) instrumentRefs.set(kind, outer);
   if (kind && spotLight) {
     if (!_kindLights[kind]) _kindLights[kind] = [];
     _kindLights[kind].push(spotLight);
@@ -459,6 +523,25 @@ loader.load("/static/yamaha_m1a_piano/scene.gltf", (gltf) => {
 
 
 // --- EVENT LISTENER ---
+window.addEventListener("notes:track-ready", (e) => {
+  prewarmNoteTextures(e.detail?.notes ?? []);
+});
+
+window.addEventListener("notes:playback-start", (e) => {
+  const notes = Array.isArray(e.detail?.notes) ? e.detail.notes : [];
+  notePlaybackQueue = notes
+    .filter((note) => Number.isFinite(Number(note.midi)))
+    .map((note) => ({
+      trackId: note.trackId,
+      midi: Number(note.midi),
+      dueAt: performance.now() + Math.max(0, Number(note.startMs ?? 0)),
+    }));
+});
+
+window.addEventListener("notes:playback-stop", () => {
+  notePlaybackQueue = [];
+});
+
 window.addEventListener("instrument:add", (e) => {
   const kind = (e.detail?.kind ?? "trumpet").toLowerCase();
   if (kind === "trumpet") addTrumpet();
@@ -501,6 +584,26 @@ window.addEventListener("mousemove", (e) => {
     (e.clientX / window.innerWidth) * 2 - 1,
     -(e.clientY / window.innerHeight) * 2 + 1,
   );
+});
+
+// Click → yellow emissive glow on the hit instrument
+const _clickGlows = new Map(); // inst → { meshes, t }
+window.addEventListener("click", (e) => {
+  const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
+  const ndcY = -(e.clientY / window.innerHeight) * 2 + 1;
+  _cursorNDC.set(ndcX, ndcY);
+  raycaster.setFromCamera(_cursorNDC, camera);
+  const hits = raycaster.intersectObjects(instruments.map((i) => i.outer), true);
+  if (!hits.length) return;
+  let obj = hits[0].object;
+  while (obj && !instruments.find((i) => i.outer === obj)) obj = obj.parent;
+  const inst = instruments.find((i) => i.outer === obj);
+  if (!inst) return;
+
+  // collect all meshes in this instrument
+  const meshes = [];
+  inst.outer.traverse((child) => { if (child.isMesh) meshes.push(child); });
+  _clickGlows.set(inst, { meshes, t: 1.0 });
 });
 
 // Gesture: pointing finger drives the raycaster in real-time
@@ -568,9 +671,56 @@ window.addEventListener("resize", () => {
 
 function animate() {
   requestAnimationFrame(animate);
+
+  const now = performance.now();
+  const dt = Math.min(0.033, (now - noteLastFrame) / 1000);
+  noteLastFrame = now;
+
   for (const inst of instruments) {
     inst.currentYaw += (inst.targetYaw - inst.currentYaw) * 0.06;
     inst.inner.rotation.y = inst.currentYaw;
+  }
+
+  // Click glow — soft gold emissive that fades over ~1.5 s
+  for (const [inst, state] of _clickGlows) {
+    state.t -= 0.012; // ~1.4 s fade at 60 fps
+    if (state.t <= 0) {
+      for (const m of state.meshes) {
+        if (m.material.emissive) { m.material.emissive.set(0x000000); m.material.emissiveIntensity = 0; }
+      }
+      _clickGlows.delete(inst);
+    } else {
+      const strength = state.t * 0.35; // peak emissiveIntensity = 0.35, never blinding
+      for (const m of state.meshes) {
+        if (!m.material.emissive) continue;
+        m.material.emissive.set(0xd4a800); // warm gold, not pure yellow
+        m.material.emissiveIntensity = strength;
+      }
+    }
+  }
+
+  while (notePlaybackQueue.length && notePlaybackQueue[0].dueAt <= now) {
+    const queued = notePlaybackQueue.shift();
+    spawnNote(queued.trackId);
+  }
+
+  for (let i = ACTIVE_NOTE_SPRITES.length - 1; i >= 0; i--) {
+    const sprite = ACTIVE_NOTE_SPRITES[i];
+    const age = now - sprite.userData.bornAt;
+    const progress = Math.min(1, age / NOTE_LIFETIME_MS);
+
+    if (progress >= 1) {
+      scene.remove(sprite);
+      sprite.material.dispose();
+      ACTIVE_NOTE_SPRITES.splice(i, 1);
+      continue;
+    }
+
+    sprite.position.y += dt * 1.2;
+    sprite.position.x += sprite.userData.driftX * dt * 1.4;
+    sprite.position.z += sprite.userData.driftZ * dt * 1.4;
+    sprite.material.opacity = 1 - progress;
+    sprite.scale.setScalar(0.85 + progress * 0.25);
   }
 
   // Hover glow follows the instrument under the finger
@@ -594,51 +744,5 @@ function animate() {
 }
 animate();
 
-// --- CONDUCTOR HANDS ---
-const HAND_ROT = new THREE.Euler(
-  THREE.MathUtils.degToRad(-30),
-  THREE.MathUtils.degToRad(180),
-  THREE.MathUtils.degToRad(0)
-);
-
-function makeWhite(model) {
-  model.traverse(child => {
-    if (child.isMesh) {
-      child.material = new THREE.MeshStandardMaterial({
-        color: 0xffffff, roughness: 0.3, metalness: 0.0,
-      });
-    }
-  });
-}
-
-function mirrorX(model) {
-  model.traverse(child => {
-    if (child.isMesh && child.geometry) {
-      const geo = child.geometry.clone();
-      const pos = geo.attributes.position;
-      for (let i = 0; i < pos.count; i++) pos.setX(i, -pos.getX(i));
-      pos.needsUpdate = true;
-      if (geo.attributes.normal) {
-        const norm = geo.attributes.normal;
-        for (let i = 0; i < norm.count; i++) norm.setX(i, -norm.getX(i));
-        norm.needsUpdate = true;
-      }
-      geo.computeBoundingBox();
-      geo.computeBoundingSphere();
-      child.geometry = geo;
-    }
-  });
-}
-
-loader.load("/rigged_hand/scene.gltf", (gltf) => {
-  const leftHand = gltf.scene.clone(true);
-  makeWhite(leftHand);
-  placeInstrument(leftHand, -2.0, 0.1, 2.5, 0, HAND_ROT, 1.4);
-
-  const rightHand = gltf.scene.clone(true);
-  makeWhite(rightHand);
-  mirrorX(rightHand);
-  placeInstrument(rightHand, 2.0, 0.1, 2.5, 0, HAND_ROT, 1.4);
-}, undefined, (err) => console.error("hand load failed", err));
 
 fetch("/api/ping").catch((err) => console.error("ping failed", err));

@@ -42,6 +42,7 @@ let activeTrackId = null;
 let isRecording   = false;
 let pollHandle    = null;
 let renderStarted = false;
+const trackNotes  = {};
 
 // ---------------------------------------------------------------------------
 // DOM refs
@@ -84,14 +85,22 @@ async function boot() {
   }
 
   // ── Backend session ───────────────────────────────────────────────────
+  let sessionData = null;
   try {
-    await fetch("/api/session/start", {
+    const resp = await fetch("/api/session/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: SESSION_ID, mood: "upbeat" }),
     });
+    sessionData = await resp.json();
   } catch (err) {
     console.warn("[panel] session/start failed:", err);
+  }
+
+  if (sessionData?.tracks?.length) {
+    for (const track of sessionData.tracks) {
+      registerTrackNotes(track.id, track.notes ?? []);
+    }
   }
 
   // ── Populate 3D scene with default instruments ────────────────────────
@@ -230,6 +239,7 @@ function finishRecording(trackId, notes, error) {
   $noteSub.textContent = `${notes.length} note${notes.length !== 1 ? "s" : ""} detected`;
   $note.textContent    = notes.length ? midiToName(notes[0].midi) : "—";
   renderNotes(notes);
+  registerTrackNotes(trackId, notes);
 
   const t = tracks.find(x => x.id === trackId);
   showToast(`${t?.name ?? trackId} recorded — ${notes.length} notes`);
@@ -268,6 +278,32 @@ function clearNotesList() {
   $notesLabel.textContent = "No notes yet";
 }
 
+function normalizeTrackNotes(notes) {
+  return (notes ?? []).map((n) => ({
+    midi: Number(n.midi),
+    startMs: Number(n.start_ms ?? n.startMs ?? 0),
+    durationMs: Number(n.duration_ms ?? n.durationMs ?? 0),
+  })).filter((n) => Number.isFinite(n.midi));
+}
+
+function registerTrackNotes(trackId, notes) {
+  const normalized = normalizeTrackNotes(notes);
+  trackNotes[trackId] = normalized;
+  window.dispatchEvent(new CustomEvent("notes:track-ready", {
+    detail: { trackId, notes: normalized },
+  }));
+}
+
+function buildPlaybackNotes() {
+  return Object.keys(_conductNodes).flatMap((trackId) =>
+    (trackNotes[trackId] ?? []).map((note) => ({
+      trackId,
+      midi: note.midi,
+      startMs: note.startMs,
+    })),
+  );
+}
+
 function midiToName(midi) {
   const N = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
   return midi != null ? N[midi % 12] + Math.floor(midi / 12 - 1) : "—";
@@ -281,6 +317,7 @@ async function refreshTrackStatus(trackId) {
     const data = await fetch(`/api/tracks/${trackId}/hum/status`).then((r) => r.json());
     if (data.done && data.notes?.length) {
       renderNotes(data.notes);
+      registerTrackNotes(trackId, data.notes);
       $note.textContent    = midiToName(data.notes[0].midi);
       $noteSub.textContent = `${data.notes.length} notes detected`;
       $sections.querySelector(`[data-track-id="${trackId}"]`)?.classList.add("done");
@@ -291,6 +328,7 @@ async function refreshTrackStatus(trackId) {
 function clearCurrentTrack() {
   if (!activeTrackId) return;
   clearNotesList();
+  registerTrackNotes(activeTrackId, []);
   $note.textContent    = "—";
   $noteSub.textContent = "Ready to record";
   $sections.querySelector(`[data-track-id="${activeTrackId}"]`)?.classList.remove("done");
@@ -465,6 +503,10 @@ function _startStemSource(trackId) {
 
 function _playAllStems() {
   if (_conductCtx.state === "suspended") _conductCtx.resume();
+  const playbackNotes = buildPlaybackNotes();
+  window.dispatchEvent(new CustomEvent("notes:playback-start", {
+    detail: { notes: playbackNotes },
+  }));
   Object.keys(_conductNodes).forEach(_startStemSource);
   Object.keys(_conductNodes).forEach(tid =>
     window.dispatchEvent(new CustomEvent("conduct:volume", { detail: { kind: tid, volume: _conductNodes[tid].volume } }))
@@ -494,9 +536,13 @@ function _toggleConductPause() {
   const btn = document.getElementById("btn-c-pause");
   if (_conductCtx.state === "running") {
     _conductCtx.suspend();
+    window.dispatchEvent(new CustomEvent("notes:playback-stop"));
     if (btn) btn.textContent = "▶ Resume";
   } else {
     _conductCtx.resume();
+    window.dispatchEvent(new CustomEvent("notes:playback-start", {
+      detail: { notes: buildPlaybackNotes() },
+    }));
     if (btn) btn.textContent = "⏸ Pause";
   }
 }
