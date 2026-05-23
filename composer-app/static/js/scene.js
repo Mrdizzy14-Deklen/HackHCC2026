@@ -794,7 +794,7 @@ window.addEventListener("song:final-start", (e) => {
   notePlaybackQueue = [];
   clearInterval(_beatInterval);
   const bpm = e.detail?.bpm || 120;
-  _beatInterval = setInterval(() => _onBeat(true), Math.round(60000 / bpm));
+  _beatInterval = setInterval(() => _onBeat(false), Math.round(60000 / bpm));
 });
 
 window.addEventListener("song:final-stop", () => {
