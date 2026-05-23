@@ -4,7 +4,7 @@ import Providers from "@/components/Providers";
 import BackgroundFx from "@/components/BackgroundFx";
 
 export const metadata: Metadata = {
-  title: "Treble Trouble — Conduct your orchestra",
+  title: "Treble Trouble",
   description: "A digital concert hall for composers, conductors and ensembles.",
 };
 
