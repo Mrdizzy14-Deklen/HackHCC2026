@@ -503,6 +503,26 @@ window.addEventListener("mousemove", (e) => {
   );
 });
 
+// Click → yellow emissive glow on the hit instrument
+const _clickGlows = new Map(); // inst → { meshes, t }
+window.addEventListener("click", (e) => {
+  const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
+  const ndcY = -(e.clientY / window.innerHeight) * 2 + 1;
+  _cursorNDC.set(ndcX, ndcY);
+  raycaster.setFromCamera(_cursorNDC, camera);
+  const hits = raycaster.intersectObjects(instruments.map((i) => i.outer), true);
+  if (!hits.length) return;
+  let obj = hits[0].object;
+  while (obj && !instruments.find((i) => i.outer === obj)) obj = obj.parent;
+  const inst = instruments.find((i) => i.outer === obj);
+  if (!inst) return;
+
+  // collect all meshes in this instrument
+  const meshes = [];
+  inst.outer.traverse((child) => { if (child.isMesh) meshes.push(child); });
+  _clickGlows.set(inst, { meshes, t: 1.0 });
+});
+
 // Gesture: pointing finger drives the raycaster in real-time
 window.addEventListener("gesture:point", (e) => {
   _gestureHovered = applyHover(e.detail.x, e.detail.y);
@@ -571,6 +591,24 @@ function animate() {
   for (const inst of instruments) {
     inst.currentYaw += (inst.targetYaw - inst.currentYaw) * 0.06;
     inst.inner.rotation.y = inst.currentYaw;
+  }
+
+  // Click glow — soft gold emissive that fades over ~1.5 s
+  for (const [inst, state] of _clickGlows) {
+    state.t -= 0.012; // ~1.4 s fade at 60 fps
+    if (state.t <= 0) {
+      for (const m of state.meshes) {
+        if (m.material.emissive) { m.material.emissive.set(0x000000); m.material.emissiveIntensity = 0; }
+      }
+      _clickGlows.delete(inst);
+    } else {
+      const strength = state.t * 0.35; // peak emissiveIntensity = 0.35, never blinding
+      for (const m of state.meshes) {
+        if (!m.material.emissive) continue;
+        m.material.emissive.set(0xd4a800); // warm gold, not pure yellow
+        m.material.emissiveIntensity = strength;
+      }
+    }
   }
 
   // Hover glow follows the instrument under the finger
