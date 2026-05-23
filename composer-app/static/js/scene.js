@@ -83,11 +83,11 @@ const instrumentRefs = new Map();
 
 let _floorMesh = null;
 let _beatDecay = 0;
-let _cameraShake = 0;
 let _floorPulse = 0;
 let _beatInterval = null;
 let _notePlaybackList = [];
 let _noteLoopTimer = null;
+let _inFinalSong = false;
 
 function getInstrumentWorldPosition(kind) {
   const ref = instrumentRefs.get(kind);
@@ -148,12 +148,17 @@ function spawnNote(trackId) {
 }
 
 function _onBeat(strong) {
-  const mult = strong ? 1.5 : 1.0;
-  _beatDecay = mult;
-  _cameraShake = strong ? 0.06 : 0.03;
-  _floorPulse = strong ? 1.0 : 0.65;
-  for (const inst of instruments) {
-    inst.outer.userData.beatBob = strong ? 0.22 : 0.12;
+  if (!_inFinalSong) {
+    const mult = strong ? 1.5 : 1.0;
+    _beatDecay = mult;
+    _floorPulse = strong ? 1.0 : 0.65;
+    for (const inst of instruments) {
+      inst.outer.userData.beatBob = strong ? 0.22 : 0.12;
+    }
+  }
+  const impulse = strong ? 0.14 : 0.08;
+  for (const s of _streamers) {
+    s.vel += impulse * s.side * (0.65 + Math.random() * 0.7);
   }
 }
 
@@ -779,6 +784,11 @@ window.addEventListener("notes:playback-stop", () => {
 });
 
 window.addEventListener("song:final-start", (e) => {
+  _inFinalSong = true;
+  for (const inst of instruments) {
+    inst.outer.position.y = inst.outer.userData.baseY;
+    inst.outer.userData.beatBob = 0;
+  }
   clearTimeout(_noteLoopTimer);
   _notePlaybackList = [];
   notePlaybackQueue = [];
@@ -788,6 +798,7 @@ window.addEventListener("song:final-start", (e) => {
 });
 
 window.addEventListener("song:final-stop", () => {
+  _inFinalSong = false;
   clearInterval(_beatInterval);
   _beatInterval = null;
 });
@@ -1001,14 +1012,12 @@ function animate() {
   // Beat decay effects
   if (_beatDecay > 0.005) {
     _beatDecay  *= 0.84;
-    _cameraShake *= 0.80;
     _floorPulse  *= 0.88;
 
     if (_curtainsOpen) {
       for (const l of _revealLights) l.intensity = 200 + _beatDecay * 420;
       _scanLight.intensity = 80 + _beatDecay * 200;
     }
-    camera.position.y = 3.5 + Math.sin(now * 0.05) * _cameraShake;
     if (_floorMesh) _floorMesh.material.emissiveIntensity = 0.18 + _floorPulse * 0.38;
     for (const inst of instruments) {
       if (inst.outer.userData.beatBob > 0.002) {
