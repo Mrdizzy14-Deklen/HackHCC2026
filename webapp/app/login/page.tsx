@@ -35,8 +35,8 @@ export default function LoginPage() {
           <svg
             className="brand-note"
             viewBox="0 0 32 32"
-            width="34"
-            height="34"
+            width="46"
+            height="46"
             fill="#000"
             aria-hidden="true"
           >
@@ -48,8 +48,8 @@ export default function LoginPage() {
           <svg
             className="brand-note"
             viewBox="0 0 32 32"
-            width="34"
-            height="34"
+            width="46"
+            height="46"
             fill="#000"
             aria-hidden="true"
           >
