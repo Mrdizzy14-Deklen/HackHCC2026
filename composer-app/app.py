@@ -65,6 +65,12 @@ class _Ctx:
         self.render_busy = False
         self.render_done = False
         self.render_error = None
+        self.mix_busy      = False
+        self.mix_done      = False
+        self.mix_error: str | None = None
+        self.finalize_busy  = False
+        self.finalize_done  = False
+        self.finalize_error: str | None = None
 
 
 @asynccontextmanager
@@ -119,6 +125,55 @@ def _comp_json(comp: Composition) -> dict:
             for t in comp.tracks
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Mix helper
+# ---------------------------------------------------------------------------
+
+def _do_mix_stems(sid: str, pitch: float = 0.0, tempo: float = 1.0) -> Path:
+    import numpy as np
+    import librosa
+    from hackhcc.composition import session_dir
+
+    s_dir = session_dir(sid) / "stems"
+    comp  = load_composition(sid)
+
+    arrays, sr_out = [], None
+    for t in comp.tracks:
+        p = s_dir / f"{t.id}.wav"
+        if not p.is_file():
+            continue
+        y, sr = librosa.load(str(p), sr=None, mono=True)
+        if sr_out is None:
+            sr_out = sr
+        elif sr != sr_out:
+            y = librosa.resample(y, orig_sr=sr, target_sr=sr_out)
+        arrays.append(y)
+
+    if not arrays:
+        raise RuntimeError("No stems found — render first")
+
+    max_len = max(len(a) for a in arrays)
+    mixed   = np.mean([np.pad(a, (0, max_len - len(a))) for a in arrays], axis=0)
+
+    if pitch != 0:
+        mixed = librosa.effects.pitch_shift(mixed, sr=sr_out, n_steps=float(pitch))
+    if tempo != 1.0:
+        mixed = librosa.effects.time_stretch(mixed, rate=float(tempo))
+
+    peak = np.max(np.abs(mixed))
+    if peak > 0:
+        mixed = mixed / peak * 0.9
+
+    out = session_dir(sid) / "master.wav"
+    try:
+        import soundfile as sf
+        sf.write(str(out), mixed, sr_out)
+    except ImportError:
+        from scipy.io import wavfile
+        wavfile.write(str(out), sr_out, mixed.astype("float32"))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +387,144 @@ async def conduct_start():
     return {"status": "ready", "stems": stems, "session_id": sid}
 
 
-# --- Publish ----------------------------------------------------------------
+# --- Master mix -------------------------------------------------------------
+
+@app.post("/api/master")
+async def create_master(pitch: float = 0.0, tempo: float = 1.0):
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+    ctx: _Ctx = app.state.ctx
+    if ctx.mix_busy:
+        raise HTTPException(409, "Mix already running")
+    ctx.mix_busy  = True
+    ctx.mix_done  = False
+    ctx.mix_error = None
+    def _mix():
+        try:
+            _do_mix_stems(sid, pitch, tempo)
+            ctx.mix_done = True
+        except Exception as exc:
+            ctx.mix_error = str(exc)
+        finally:
+            ctx.mix_busy = False
+    threading.Thread(target=_mix, daemon=True).start()
+    return {"status": "mixing", "pitch": pitch, "tempo": tempo}
+
+
+@app.get("/api/master/status")
+async def master_status():
+    ctx: _Ctx = app.state.ctx
+    return {"busy": ctx.mix_busy, "done": ctx.mix_done, "error": ctx.mix_error}
+
+
+@app.get("/api/master/file")
+async def serve_master():
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+    from hackhcc.composition import session_dir
+    path = session_dir(sid) / "master.wav"
+    if not path.is_file():
+        raise HTTPException(404, "No master yet — call POST /api/master first")
+    return FileResponse(str(path), media_type="audio/wav", filename="master.wav")
+
+
+# --- AI Finalize  (master.wav → MusicGen melody conditioning → final.wav) ----
+
+def _do_finalize_master(sid: str) -> Path:
+    import shutil
+    from hackhcc.composition import session_dir, load_composition
+
+    master_path = session_dir(sid) / "master.wav"
+    if not master_path.is_file():
+        raise RuntimeError("No master.wav — run /api/master first")
+
+    comp  = load_composition(sid)
+    mood  = comp.mood or "upbeat"
+    out   = session_dir(sid) / "final.wav"
+
+    token = (os.getenv("REPLICATE_API_TOKEN") or "").strip()
+    if not token:
+        print("  [finalize] No REPLICATE_API_TOKEN — copying master as final")
+        shutil.copy(str(master_path), str(out))
+        return out
+
+    try:
+        import replicate
+        from hackhcc.phases.setup.render import _get_musicgen_ref
+
+        prompt = (
+            f"{mood} orchestral arrangement, full band, professional studio quality, "
+            f"cohesive polished song, radio ready, rich harmonics, no vocals"
+        )
+        ref = _get_musicgen_ref()
+        print(f"  [finalize] MusicGen conditioning on master.wav ({mood}, 30s)...")
+        with master_path.open("rb") as f:
+            output = replicate.run(
+                ref,
+                input={
+                    "prompt": prompt,
+                    "melody": f,
+                    "model_version": "stereo-melody-large",
+                    "duration": 30,
+                    "normalization_strategy": "loudness",
+                },
+            )
+        url = str(output) if not isinstance(output, list) else str(output[0])
+        tmp = session_dir(sid) / "_final_tmp.wav"
+        urllib.request.urlretrieve(url, str(tmp))
+        tmp.rename(out)
+        print(f"  [finalize] Done → final.wav")
+    except Exception as exc:
+        print(f"  [finalize] MusicGen failed ({exc}) — falling back to master.wav")
+        shutil.copy(str(master_path), str(out))
+
+    return out
+
+
+@app.post("/api/finalize")
+async def finalize_composition():
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+    ctx: _Ctx = app.state.ctx
+    if ctx.finalize_busy:
+        raise HTTPException(409, "Finalize already running")
+    ctx.finalize_busy  = True
+    ctx.finalize_done  = False
+    ctx.finalize_error = None
+    def _fin():
+        try:
+            _do_finalize_master(sid)
+            ctx.finalize_done = True
+        except Exception as exc:
+            ctx.finalize_error = str(exc)
+        finally:
+            ctx.finalize_busy = False
+    threading.Thread(target=_fin, daemon=True).start()
+    return {"status": "finalizing"}
+
+
+@app.get("/api/finalize/status")
+async def finalize_status():
+    ctx: _Ctx = app.state.ctx
+    return {"busy": ctx.finalize_busy, "done": ctx.finalize_done, "error": ctx.finalize_error}
+
+
+@app.get("/api/finalize/file")
+async def serve_final():
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+    from hackhcc.composition import session_dir
+    path = session_dir(sid) / "final.wav"
+    if not path.is_file():
+        raise HTTPException(404, "No final.wav yet — call POST /api/finalize first")
+    return FileResponse(str(path), media_type="audio/wav", filename="composition_final.wav")
+
+
+# --- Publish (Treble Trouble) — prefers your final.wav, then export, then stems ---
 
 def _upload_mix_to_treble_trouble(wav_path: Path, session_id: str) -> str:
     """POST the exported mix to Treble Trouble's GridFS upload; return audioId."""
@@ -356,12 +548,7 @@ def _upload_mix_to_treble_trouble(wav_path: Path, session_id: str) -> str:
 
 
 def _mixdown_stems_to_export(sid: str) -> Path | None:
-    """Sum the rendered stems into exports/<sid>.wav.
-
-    Fallback for when there's no desktop conduct export — the browser-side
-    conduct plays stems live but doesn't write a combined file, so we build one
-    from the rendered stems on publish.
-    """
+    """Sum the rendered stems into exports/<sid>.wav."""
     import numpy as np
     from scipy.io import wavfile
 
@@ -377,9 +564,9 @@ def _mixdown_stems_to_export(sid: str) -> Path | None:
     for f in stem_files:
         sr, raw = wavfile.read(f)
         a = raw.astype(np.float32)
-        if raw.dtype.kind in "iu":            # integer PCM → float [-1, 1]
+        if raw.dtype.kind in "iu":
             a /= float(np.iinfo(raw.dtype).max)
-        if a.ndim > 1:                         # stereo → mono
+        if a.ndim > 1:
             a = a.mean(axis=1)
         tracks.append(a)
 
@@ -396,23 +583,27 @@ def _mixdown_stems_to_export(sid: str) -> Path | None:
     return out
 
 
+def _publish_wav_path(sid: str) -> Path | None:
+    """Pick the best mix to publish: final.wav > exports/<sid>.wav > stem mixdown."""
+    from hackhcc.composition import session_dir
+
+    final = session_dir(sid) / "final.wav"
+    if final.is_file():
+        return final
+    export = EXPORTS_DIR / f"{sid}.wav"
+    if export.is_file():
+        return export
+    return _mixdown_stems_to_export(sid)
+
+
 @app.post("/api/publish")
 async def publish():
-    """Hand the finished song off to Treble Trouble to be named + published.
-
-    Uses the desktop conduct export (exports/<session>.wav) if present, else
-    mixes the rendered stems into one. Uploads it into the web app's GridFS and
-    returns a /publish URL the browser redirects to, so the conductor can log
-    in, name the piece, and publish it to the leaderboard.
-    """
+    """Hand the finished song off to Treble Trouble to be named + published."""
     sid = _read_active_session()
     if not sid:
         raise HTTPException(400, "No active session")
 
-    wav = EXPORTS_DIR / f"{sid}.wav"
-    if not wav.is_file():
-        # No desktop export — mix the rendered stems into one file.
-        wav = await asyncio.to_thread(_mixdown_stems_to_export, sid)
+    wav = await asyncio.to_thread(_publish_wav_path, sid)
     if not wav or not wav.is_file():
         raise HTTPException(
             400, "Nothing to publish yet — record your parts and render first"
@@ -420,7 +611,7 @@ async def publish():
 
     try:
         audio_id = await asyncio.to_thread(_upload_mix_to_treble_trouble, wav, sid)
-    except Exception as exc:  # noqa: BLE001 — surface any transport/HTTP error to the UI
+    except Exception as exc:
         raise HTTPException(
             502, f"Couldn't reach Treble Trouble at {TREBLE_TROUBLE_URL} ({exc})"
         )

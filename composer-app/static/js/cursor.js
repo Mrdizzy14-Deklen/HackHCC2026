@@ -37,6 +37,12 @@ let _canvas = null;
 let _ctx    = null;
 let _dw = 0, _dh = 0;
 
+const _standImg = new Image();
+let _standReady = false;
+_standImg.onload = () => { _standReady = true; };
+_standImg.onerror = () => console.error("music stand PNG failed to load:", _standImg.src);
+_standImg.src = "/static/music-stand.png";
+
 // Raw data from gestures.js (updated at ~15 fps)
 let _rawHands   = [];
 let _rawGesture = "none";
@@ -75,6 +81,13 @@ function _onLandmarks(e) {
 function _renderLoop() {
   requestAnimationFrame(_renderLoop);
   _ctx.clearRect(0, 0, _dw, _dh);
+
+  // Music stand — fixed at bottom center, always visible
+  if (_standReady) {
+    const sw = 350;
+    const sh = 350;
+    _ctx.drawImage(_standImg, (_dw - sw) / 2, _dh - sh, sw, sh);
+  }
 
   if (_rawHands.length === 0) {
     _smoothHands = [];
@@ -127,26 +140,9 @@ function _drawHand(lm, rawLm, gesture) {
     const p = pts[tip];
     const isIndex = tip === 8;
     _ctx.beginPath();
-    _ctx.arc(p.x, p.y, isIndex ? 10 : 5, 0, Math.PI * 2);
-    _ctx.fillStyle = isIndex ? "rgba(80,220,255,0.95)" : "rgba(255,255,255,0.45)";
+    _ctx.arc(p.x, p.y, isIndex ? 6 : 5, 0, Math.PI * 2);
+    _ctx.fillStyle = isIndex ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.45)";
     _ctx.fill();
-
-    if (isIndex) {
-      // Inner bright core
-      _ctx.beginPath();
-      _ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-      _ctx.fillStyle = "rgba(255,255,255,0.9)";
-      _ctx.fill();
-
-      // Outer soft glow
-      const grd = _ctx.createRadialGradient(p.x, p.y, 4, p.x, p.y, 26);
-      grd.addColorStop(0, "rgba(80,220,255,0.30)");
-      grd.addColorStop(1, "rgba(80,220,255,0)");
-      _ctx.beginPath();
-      _ctx.arc(p.x, p.y, 26, 0, Math.PI * 2);
-      _ctx.fillStyle = grd;
-      _ctx.fill();
-    }
   }
 
   // ── Crosshair when pointing ────────────────────────────────────────────────
@@ -154,7 +150,7 @@ function _drawHand(lm, rawLm, gesture) {
     const ip = pts[8];
     const R  = 18;
     const G  = 5;
-    _ctx.strokeStyle = "rgba(80,220,255,0.55)";
+    _ctx.strokeStyle = "rgba(255,210,140,0.55)";
     _ctx.lineWidth   = 1.5;
     _ctx.setLineDash([3, 3]);
     for (const [dx, dy] of [[-1,0],[1,0],[0,-1],[0,1]]) {
@@ -195,20 +191,18 @@ function _drawHand(lm, rawLm, gesture) {
     if (progress >= 1 && !_burstTs) _burstTs = now;
 
     if (progress > 0.02) {
-      // Color: green → amber → white
+      // Color: warm amber → bright gold → white
       let r, g, b;
-      if (progress <= 0.4) {
-        r = 80; g = 220; b = 255;
-      } else if (progress <= 0.8) {
-        const t = (progress - 0.4) / 0.4;
-        r = Math.round(80  + t * (255 - 80));
-        g = Math.round(220 + t * (200 - 220));
-        b = Math.round(255 + t * (80  - 255));
-      } else {
-        const t = (progress - 0.8) / 0.2;
+      if (progress <= 0.5) {
+        const t = progress / 0.5;
         r = 255;
-        g = Math.round(200 + t * 55);
-        b = Math.round(80  + t * 175);
+        g = Math.round(180 + t * (220 - 180));
+        b = Math.round(80  + t * (140 - 80));
+      } else {
+        const t = (progress - 0.5) / 0.5;
+        r = 255;
+        g = Math.round(220 + t * (255 - 220));
+        b = Math.round(140 + t * (255 - 140));
       }
       const alpha = 0.55 + progress * 0.45;
 

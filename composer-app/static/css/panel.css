@@ -126,13 +126,34 @@ canvas:not(#gesture-cursor) { display: block; width: 100vw; height: 100vh; }
   position: fixed; top: 24px; right: 24px; bottom: 24px; width: 340px; z-index: 7;
   display: flex; flex-direction: column; gap: 28px;
   padding: 28px 24px;
-  background: rgba(20, 18, 14, 0.45);
-  backdrop-filter: blur(40px) saturate(140%);
-  -webkit-backdrop-filter: blur(40px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(12, 10, 8, 0.22);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
   border-radius: 20px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), inset 0 0 0 0.5px rgba(255, 255, 255, 0.05);
+  border: none;
+  box-shadow:
+    0 0 8px rgba(0,0,0,0.04),
+    0 20px 60px rgba(0,0,0,0.5),
+    inset  3px  3px 0.5px -3.5px rgba(255,255,255,0.09),
+    inset -3px -3px 0.5px -3.5px rgba(255,255,255,0.85),
+    inset  1px  1px 1px  -0.5px  rgba(255,255,255,0.6),
+    inset -1px -1px 1px  -0.5px  rgba(255,255,255,0.6),
+    inset 0 0 6px 6px rgba(255,255,255,0.12),
+    inset 0 0 2px 2px rgba(255,255,255,0.06),
+    0 0 12px rgba(0,0,0,0.15);
   transition: transform 0.3s ease;
+  isolation: isolate;
+}
+
+/* liquid glass distortion layer — sits behind all panel content */
+.panel-glass-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 20px;
+  backdrop-filter: url("#panel-glass");
+  -webkit-backdrop-filter: url("#panel-glass");
+  pointer-events: none;
 }
 .panel.collapsed { transform: translateX(calc(100% + 24px)); }
 
@@ -325,4 +346,50 @@ canvas:not(#gesture-cursor) { display: block; width: 100vw; height: 100vh; }
   transition: background 0.15s, color 0.15s;
 }
 .conduct-solo:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.conduct-row.reviewed {
+  opacity: 0.45;
+}
+.conduct-row.reviewed .conduct-fill {
+  background: linear-gradient(90deg, #7effa0, #64d882);
+}
 /* ─── End Conduct Mode ─── */
+
+/* ─── Effects Phase ─── */
+.fx-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+  margin-bottom: 4px;
+}
+.fx-row.fx-active {
+  background: rgba(80, 220, 255, 0.08);
+  border-color: rgba(80, 220, 255, 0.3);
+}
+.fx-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(255,255,255,0.5);
+}
+.fx-value {
+  font: 500 26px/1 'Fraunces', serif;
+  color: #fff;
+  min-width: 80px;
+  text-align: right;
+}
+.fx-hint {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  line-height: 1.7;
+  padding: 8px 0 0;
+}
+.fx-lyrics {
+  font: 400 14px/1.7 'Fraunces', serif;
+  color: rgba(255,255,255,0.85);
+  padding: 8px 0;
+}
+/* ─── End Effects Phase ─── */

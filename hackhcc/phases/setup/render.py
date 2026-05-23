@@ -253,6 +253,8 @@ def run_render_stems(
     *,
     use_musicgen: bool = True,  # kept for backward compat
 ) -> Composition:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     comp = load_composition(session_id)
     if not comp.tracks:
         raise RuntimeError("No tracks to render.")
@@ -265,14 +267,42 @@ def run_render_stems(
     else:
         print("\n  Warning: no melody hum found — each instrument uses its own hum")
 
-    print(f"\n--- Stem render ({GEN_DURATION_SEC}s per track via MusicGen; looped to {MIX_DURATION_SEC}s at mix) ---")
-    for track in comp.tracks:
+    # Pre-warm MusicGen version cache so all threads reuse the same ref
+    _get_musicgen_ref()
+
+    n = len(comp.tracks)
+    print(f"\n--- Stem render ({GEN_DURATION_SEC}s per track, {n} tracks in parallel via MusicGen) ---")
+
+    def _render_one(track: Track) -> tuple[str, str]:
         inst = track.instrument.lower()
         is_melodic = inst in _MELODIC_INSTRUMENTS
         hum_to_use = shared_hum if is_melodic else None
-        print(f"  Track {track.id} ({inst}) [{'shared melody' if is_melodic and shared_hum else 'text-only' if not is_melodic else 'own hum'}]...")
-        track.stem_path = render_track_stem(session_id, track, comp, shared_melody_hum=hum_to_use)
-        print(f"    -> {track.stem_path}")
+        label = "shared melody" if is_melodic and shared_hum else "text-only"
+        print(f"  [{track.id}] {inst} ({label}) starting…")
+        stem_path = render_track_stem(session_id, track, comp, shared_melody_hum=hum_to_use)
+        print(f"  [{track.id}] {inst} -> {stem_path}")
+        return track.id, stem_path
+
+    stem_results: dict[str, str] = {}
+    errors: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=n) as executor:
+        futures = {executor.submit(_render_one, t): t for t in comp.tracks}
+        for future in as_completed(futures):
+            track = futures[future]
+            try:
+                tid, path = future.result()
+                stem_results[tid] = path
+            except Exception as exc:
+                errors.append(f"{track.id}: {exc}")
+                print(f"  [{track.id}] render failed: {exc}")
+
+    if errors:
+        raise RuntimeError("Some stems failed to render:\n" + "\n".join(errors))
+
+    for track in comp.tracks:
+        if track.id in stem_results:
+            track.stem_path = stem_results[track.id]
 
     save_composition(comp)
     return load_composition(session_id)
