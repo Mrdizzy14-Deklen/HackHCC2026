@@ -369,15 +369,6 @@ function onRenderDone() {
   btn.style.marginTop = "6px";
   btn.addEventListener("click", launchConduct);
   document.querySelector(".footer").appendChild(btn);
-
-  // Hands the finished song off to the web app to be named and published to
-  // the leaderboard (mixes the rendered stems if there's no conduct export).
-  const pub = document.createElement("button");
-  pub.className   = "btn";
-  pub.textContent = "Save & publish ↗";
-  pub.style.marginTop = "6px";
-  pub.addEventListener("click", publishSong);
-  document.querySelector(".footer").appendChild(pub);
 }
 
 // ---------------------------------------------------------------------------
@@ -1209,8 +1200,10 @@ function _exportFinal(withLyrics = false) {
   document.body.removeChild(a);
 
   document.querySelector(".footer").innerHTML = `
-    <button class="btn primary" onclick="location.reload()">Start Over 🔄</button>
+    <button class="btn primary" id="btn-publish-final">Save & publish ↗</button>
+    <button class="btn" onclick="location.reload()" style="margin-top:6px">Start Over 🔄</button>
   `;
+  document.getElementById("btn-publish-final").addEventListener("click", publishSong);
 }
 
 // Upload the exported mix and redirect to the web app's publish page.

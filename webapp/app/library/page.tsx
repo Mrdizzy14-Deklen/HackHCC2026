@@ -53,7 +53,14 @@ export default function LibraryPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <button className="new-btn"><span className="plus">+</span> Compose</button>
+          <button
+            className="new-btn"
+            onClick={() => {
+              fetch("/api/launch-composer", { method: "POST" }).catch(() => {});
+            }}
+          >
+            <span className="plus">+</span> Compose
+          </button>
         </div>
       </div>
 
