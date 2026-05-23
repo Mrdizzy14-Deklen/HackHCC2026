@@ -459,4 +459,52 @@ function animate() {
 }
 animate();
 
+// --- CONDUCTOR HANDS ---
+const HAND_ROT = new THREE.Euler(
+  THREE.MathUtils.degToRad(-30),
+  THREE.MathUtils.degToRad(180),
+  THREE.MathUtils.degToRad(0)
+);
+
+function makeWhite(model) {
+  model.traverse(child => {
+    if (child.isMesh) {
+      child.material = new THREE.MeshStandardMaterial({
+        color: 0xffffff, roughness: 0.3, metalness: 0.0,
+      });
+    }
+  });
+}
+
+function mirrorX(model) {
+  model.traverse(child => {
+    if (child.isMesh && child.geometry) {
+      const geo = child.geometry.clone();
+      const pos = geo.attributes.position;
+      for (let i = 0; i < pos.count; i++) pos.setX(i, -pos.getX(i));
+      pos.needsUpdate = true;
+      if (geo.attributes.normal) {
+        const norm = geo.attributes.normal;
+        for (let i = 0; i < norm.count; i++) norm.setX(i, -norm.getX(i));
+        norm.needsUpdate = true;
+      }
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+      child.geometry = geo;
+    }
+  });
+}
+
+loader.load("/rigged_hand/scene.gltf", (gltf) => {
+  const leftHand = gltf.scene.clone(true);
+  makeWhite(leftHand);
+  precompile(leftHand.clone(true));
+  placeInstrument(leftHand, -2.0, 0.1, 2.5, 0, HAND_ROT, 1.4);
+
+  const rightHand = gltf.scene.clone(true);
+  makeWhite(rightHand);
+  mirrorX(rightHand);
+  placeInstrument(rightHand, 2.0, 0.1, 2.5, 0, HAND_ROT, 1.4);
+}, undefined, (err) => console.error("hand load failed", err));
+
 fetch("/api/ping").catch((err) => console.error("ping failed", err));

@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 STATIC_DIR = Path(__file__).parent / "static"
+RIGGED_HAND_DIR = Path(__file__).parent / "rigged_hand"
 
 
 @asynccontextmanager
@@ -26,6 +27,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/rigged_hand", StaticFiles(directory=RIGGED_HAND_DIR), name="rigged_hand")
 
 
 @app.get("/")
