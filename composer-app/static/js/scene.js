@@ -324,6 +324,16 @@ const BELL_FIX = new THREE.Euler(0, -Math.PI / 2, 0);
 const instruments  = [];
 const _kindLights  = {};   // kind → [SpotLight, ...] for conduct volume visuals
 
+// Drop-in spawn animation state
+const _spawning = []; // { outer, finalY, t }
+
+function _startDropIn(outer) {
+  const finalY = outer.position.y;
+  outer.position.y = finalY + 7; // start above stage
+  outer.scale.setScalar(0.001);  // start micro-tiny to avoid pop-in
+  _spawning.push({ outer, finalY, t: 0 });
+}
+
 window.addEventListener("conduct:volume", (e) => {
   const lights = _kindLights[e.detail.kind] ?? [];
   for (const l of lights) l.intensity = e.detail.volume * 200;
@@ -385,15 +395,18 @@ const VIOLIN_SLOTS = initSlotsWithLights([
 ]);
 const violinCache = { scene: null, count: 0, pending: 0 };
 function addViolin() {
-  if (violinCache.count + violinCache.pending >= VIOLIN_SLOTS.length) return;
-  if (!violinCache.scene) { violinCache.pending++; return; }
-  const slot = VIOLIN_SLOTS[violinCache.count];
-  placeInstrument(violinCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 30, VIOLIN_ROT, 1.2, slot.light, "violin");
-  violinCache.count++;
+  if (violinCache.count >= VIOLIN_SLOTS.length) return;
+  if (!violinCache.scene) { violinCache.pending = true; return; }
+  const slots = VIOLIN_SLOTS.slice(violinCache.count);
+  violinCache.count = VIOLIN_SLOTS.length;
+  slots.forEach((slot, i) => setTimeout(() => {
+    const outer = placeInstrument(violinCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 30, VIOLIN_ROT, 1.2, slot.light, "violin");
+    _startDropIn(outer);
+  }, i * 100));
 }
 loader.load("/static/violon_high/scene.gltf", (gltf) => {
   violinCache.scene = gltf.scene;
-  while (violinCache.count < VIOLIN_SLOTS.length) addViolin();
+  if (violinCache.pending) { violinCache.pending = false; addViolin(); }
 }, undefined, (err) => console.error("violin load failed", err));
 
 
@@ -403,15 +416,18 @@ const FLUTE_SLOTS = initSlotsWithLights([
 ]);
 const fluteCache = { scene: null, count: 0, pending: 0 };
 function addFlute() {
-  if (fluteCache.count + fluteCache.pending >= FLUTE_SLOTS.length) return;
-  if (!fluteCache.scene) { fluteCache.pending++; return; }
-  const slot = FLUTE_SLOTS[fluteCache.count];
-  placeInstrument(fluteCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -30, FLUTE_ROT, 1.2, slot.light, "flute");
-  fluteCache.count++;
+  if (fluteCache.count >= FLUTE_SLOTS.length) return;
+  if (!fluteCache.scene) { fluteCache.pending = true; return; }
+  const slots = FLUTE_SLOTS.slice(fluteCache.count);
+  fluteCache.count = FLUTE_SLOTS.length;
+  slots.forEach((slot, i) => setTimeout(() => {
+    const outer = placeInstrument(fluteCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -30, FLUTE_ROT, 1.2, slot.light, "flute");
+    _startDropIn(outer);
+  }, i * 100));
 }
 loader.load("/static/basic_flute/scene.gltf", (gltf) => {
   fluteCache.scene = gltf.scene;
-  while (fluteCache.count < FLUTE_SLOTS.length) addFlute();
+  if (fluteCache.pending) { fluteCache.pending = false; addFlute(); }
 }, undefined, (err) => console.error("flute load failed", err));
 
 
@@ -457,15 +473,18 @@ const TRUMPET_SLOTS = initSlotsWithLights([
 ]);
 const trumpetCache = { scene: null, count: 0, pending: 0 };
 function addTrumpet() {
-  if (trumpetCache.count + trumpetCache.pending >= TRUMPET_SLOTS.length) return;
-  if (!trumpetCache.scene) { trumpetCache.pending++; return; }
-  const slot = TRUMPET_SLOTS[trumpetCache.count];
-  placeInstrument(trumpetCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -25, TRUMPET_ROT, 1.2, slot.light, "trumpet");
-  trumpetCache.count++;
+  if (trumpetCache.count >= TRUMPET_SLOTS.length) return;
+  if (!trumpetCache.scene) { trumpetCache.pending = true; return; }
+  const slots = TRUMPET_SLOTS.slice(trumpetCache.count);
+  trumpetCache.count = TRUMPET_SLOTS.length;
+  slots.forEach((slot, i) => setTimeout(() => {
+    const outer = placeInstrument(trumpetCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -25, TRUMPET_ROT, 1.2, slot.light, "trumpet");
+    _startDropIn(outer);
+  }, i * 100));
 }
 loader.load("/static/trumpet/scene.gltf", (gltf) => {
   trumpetCache.scene = gltf.scene;
-  while (trumpetCache.count < TRUMPET_SLOTS.length) addTrumpet();
+  if (trumpetCache.pending) { trumpetCache.pending = false; addTrumpet(); }
 }, undefined, (err) => console.error("trumpet load failed", err));
 
 
@@ -494,15 +513,18 @@ const DRUM_SLOTS = initSlotsWithLights([
 ]);
 const drumCache = { scene: null, count: 0, pending: 0 };
 function addDrum() {
-  if (drumCache.count + drumCache.pending >= DRUM_SLOTS.length) return;
-  if (!drumCache.scene) { drumCache.pending++; return; }
-  const slot = DRUM_SLOTS[drumCache.count];
-  placeInstrument(drumCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 0, DRUM_ROT, 1.5, slot.light, "drums");
-  drumCache.count++;
+  if (drumCache.count >= DRUM_SLOTS.length) return;
+  if (!drumCache.scene) { drumCache.pending = true; return; }
+  const slots = DRUM_SLOTS.slice(drumCache.count);
+  drumCache.count = DRUM_SLOTS.length;
+  slots.forEach((slot, i) => setTimeout(() => {
+    const outer = placeInstrument(drumCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 0, DRUM_ROT, 1.5, slot.light, "drums");
+    _startDropIn(outer);
+  }, i * 100));
 }
 loader.load("/static/timpani_drum/scene.gltf", (gltf) => {
   drumCache.scene = gltf.scene;
-  while (drumCache.count < DRUM_SLOTS.length) addDrum();
+  if (drumCache.pending) { drumCache.pending = false; addDrum(); }
 }, undefined, (err) => console.error("drum load failed", err));
 
 // --- PIANO (Tier 3 Center) ---
@@ -513,12 +535,13 @@ const pianoCache = { scene: null, placed: false, pending: false };
 function addPiano() {
   if (pianoCache.placed) return;
   if (!pianoCache.scene) { pianoCache.pending = true; return; }
-  placeInstrument(pianoCache.scene.clone(true), 0, 0.8, -4.5, 5, PIANO_ROT, 2.0, pianoLight, "piano");
   pianoCache.placed = true;
+  const outer = placeInstrument(pianoCache.scene.clone(true), 0, 0.8, -4.5, 5, PIANO_ROT, 2.0, pianoLight, "piano");
+  _startDropIn(outer);
 }
 loader.load("/static/yamaha_m1a_piano/scene.gltf", (gltf) => {
   pianoCache.scene = gltf.scene;
-  addPiano(); // auto-place on load (also drains pending flag)
+  if (pianoCache.pending) { pianoCache.pending = false; addPiano(); }
 }, undefined, (err) => console.error("piano load failed", err));
 
 
@@ -679,6 +702,16 @@ function animate() {
   for (const inst of instruments) {
     inst.currentYaw += (inst.targetYaw - inst.currentYaw) * 0.06;
     inst.inner.rotation.y = inst.currentYaw;
+  }
+
+  // Drop-in spawn: fall from above + scale up with ease-out cubic
+  for (let i = _spawning.length - 1; i >= 0; i--) {
+    const s = _spawning[i];
+    s.t = Math.min(1, s.t + 0.022); // ~0.75 s total
+    const ease = 1 - Math.pow(1 - s.t, 3);
+    s.outer.position.y = s.finalY + (1 - ease) * 7;
+    s.outer.scale.setScalar(0.001 + ease * 0.999);
+    if (s.t >= 1) _spawning.splice(i, 1);
   }
 
   // Click glow — soft gold emissive that fades over ~1.5 s
