@@ -412,6 +412,8 @@ let _effectsMixing  = false;
 let _inLyricsMode    = false;
 let _lyricsText      = "";
 let _lyricsRecording = false;
+let _lyricsStopFn    = null;   // cleanup fn exposed by _captureLyrics
+let _lyricsFinishing = false;  // true while 3-second countdown is running
 
 // AI polish phase (between effects and lyrics)
 let _inPolishMode = false;
@@ -955,25 +957,58 @@ async function _finalizeWithAI() {
 // ---------------------------------------------------------------------------
 
 async function _enterLyricsPhase() {
-  _inEffectsMode = false;
-  _inLyricsMode  = true;
-  _lyricsText    = "";
+  _inEffectsMode   = false;
+  _inLyricsMode    = true;
+  _lyricsText      = "";
+  _lyricsFinishing = false;
 
   $title.textContent = "Add Lyrics?";
-  $sub.textContent   = "👍👍 speak lyrics · ✊ skip & export";
+  $sub.textContent   = "🎙 Speak, then ✊ fist to finish";
 
   $sections.innerHTML = `
-    <p class="fx-hint">Hold both thumbs up and speak your lyrics.<br>
-    The music will keep playing while you talk.<br><br>
-    Make a fist to skip and just download the track.</p>
+    <p class="fx-hint">Click <strong>Speak Lyrics</strong> and say your lyrics.<br>
+    Make a <strong>fist ✊</strong> (or click Done) when finished —<br>
+    a 3-second pause lets the mic close cleanly before processing.<br><br>
+    Skip to just download the instrumental.</p>
   `;
 
   document.querySelector(".footer").innerHTML = `
-    <button class="btn" id="btn-skip-lyrics">✊ Skip</button>
+    <button class="btn" id="btn-skip-lyrics">Skip</button>
     <button class="btn primary" id="btn-speak-lyrics">🎙 Speak Lyrics</button>
   `;
   document.getElementById("btn-skip-lyrics").addEventListener("click", () => _exportFinal());
   document.getElementById("btn-speak-lyrics").addEventListener("click", _captureLyrics);
+}
+
+// Called by fist gesture or Done button — countdown then process
+function _finishLyricsCapture() {
+  if (_lyricsFinishing || !_lyricsRecording) return;
+  _lyricsFinishing = true;
+
+  // Flush textarea if that fallback is active
+  const ta = document.getElementById("lyrics-input");
+  if (ta) _lyricsText = ta.value;
+
+  const btn = document.getElementById("btn-stop-lyrics");
+  let n = 3;
+  const update = () => {
+    $sub.textContent = `Closing mic in ${n}…`;
+    if (btn) btn.textContent = `Done in ${n}…`;
+  };
+  update();
+
+  const tick = setInterval(() => {
+    n--;
+    if (n > 0) {
+      update();
+    } else {
+      clearInterval(tick);
+      _lyricsRecording = false;
+      _lyricsFinishing = false;
+      if (_lyricsStopFn) { _lyricsStopFn(); _lyricsStopFn = null; }
+      _mixLyricsAndExport();
+    }
+  }, 1000);
 }
 
 function _captureLyrics() {
