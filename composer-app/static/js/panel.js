@@ -24,13 +24,12 @@ const CORE_TRACKS = [
   { id: "piano",   name: "Piano" },
   { id: "violin",  name: "Violin" },
   { id: "trumpet", name: "Trumpet" },
-  { id: "flute",   name: "Flute" },
   { id: "drums",   name: "Drums" },
 ];
 
 // Instruments the 3D scene can render (superset — user can add via voice)
 const SCENE_INSTRUMENTS = [
-  "piano", "violin", "trumpet", "flute", "drums",
+  "piano", "violin", "trumpet", "drums",
   "oboe", "trombone", "french horn",
 ];
 
@@ -103,13 +102,8 @@ async function boot() {
     }
   }
 
-  // ── Populate 3D scene with default instruments ────────────────────────
-  // Small delay lets the GLTF loader cache up before we fire add events
-  setTimeout(() => {
-    for (const t of CORE_TRACKS) {
-      window.dispatchEvent(new CustomEvent("instrument:add", { detail: { kind: t.id } }));
-    }
-  }, 800);
+  // Instruments are added to 3D scene after voice command on curtain-open
+  // (see gesture:curtain-open listener below)
 
   // ── Toast container ──────────────────────────────────────────────────
   const $toast = document.createElement("div");
@@ -414,8 +408,18 @@ let _effectsSource  = null;
 let _effectsMixing  = false;
 
 // Lyrics phase
-let _inLyricsMode   = false;
-let _lyricsText     = "";
+let _inLyricsMode    = false;
+let _lyricsText      = "";
+let _lyricsRecording = false;
+let _lyricsStopFn    = null;   // cleanup fn exposed by _captureLyrics
+let _lyricsFinishing = false;  // true while 3-second countdown is running
+
+// AI polish phase (between effects and lyrics)
+let _inPolishMode = false;
+
+// Curtain voice trigger
+let _instrumentsLaunched  = false;
+let _voiceStartListening  = false;
 
 async function launchConduct() {
   let data;
@@ -578,18 +582,22 @@ async function _rerecordInConduct(trackId) {
       }, 500);
     });
 
-    $sub.textContent = "Re-rendering all stems…";
-    renderStarted = false;
-    await fetch("/api/render", { method: "POST" });
+    $sub.textContent = `Re-rendering ${name}…`;
+    await fetch(`/api/render/${trackId}`, { method: "POST" });
     await new Promise((resolve, reject) => {
       const h = setInterval(async () => {
         const d = await fetch("/api/render/status").then(r => r.json());
         if (d.done)  { clearInterval(h); resolve(); }
         if (d.error) { clearInterval(h); reject(new Error(d.error)); }
-      }, 2000);
+      }, 1000);
     });
 
-    await _reloadAllStems();
+    // Only reload the changed stem, not all of them
+    const ab  = await fetch(`/api/stems/${trackId}?t=${Date.now()}`).then(r => r.arrayBuffer());
+    const buf = await _conductCtx.decodeAudioData(ab);
+    _conductNodes[trackId].buffer = buf;
+    _startStemSource(trackId);
+
     showToast(`✓ ${name} updated!`);
     $sub.textContent = "Point at instrument + raise/lower hand for volume";
   } catch (err) {
@@ -724,21 +732,19 @@ async function _rerecordInReview() {
       }, 500);
     });
 
-    $sub.textContent = "Re-rendering…";
-    renderStarted = false;
-    await fetch("/api/render", { method: "POST" });
+    $sub.textContent = `Re-rendering ${s.name}…`;
+    await fetch(`/api/render/${s.track_id}`, { method: "POST" });
     await new Promise((resolve, reject) => {
       const h = setInterval(async () => {
         const d = await fetch("/api/render/status").then(r => r.json());
         if (d.done)  { clearInterval(h); resolve(); }
         if (d.error) { clearInterval(h); reject(new Error(d.error)); }
-      }, 2000);
+      }, 1000);
     });
 
-    for (const stem of _reviewStems) {
-      const ab = await fetch(`/api/stems/${stem.track_id}?t=${Date.now()}`).then(r => r.arrayBuffer());
-      stem.buffer = await _reviewCtx.decodeAudioData(ab);
-    }
+    // Only reload the re-hummed stem's buffer
+    const ab = await fetch(`/api/stems/${s.track_id}?t=${Date.now()}`).then(r => r.arrayBuffer());
+    s.buffer = await _reviewCtx.decodeAudioData(ab);
 
     showToast(`✓ ${s.name} updated!`);
     _playCurrentReviewStem();
@@ -904,6 +910,7 @@ async function _previewMaster() {
 // ---------------------------------------------------------------------------
 
 async function _finalizeWithAI() {
+  _inPolishMode = true;
   if (_effectsSource) { try { _effectsSource.stop(); } catch (_) {} }
   _effectsSource = null;
 
@@ -935,8 +942,10 @@ async function _finalizeWithAI() {
     _effectsSource = src;
 
     showToast("✓ Song polished!");
+    _inPolishMode = false;
     _enterLyricsPhase();
   } catch (err) {
+    _inPolishMode = false;
     showToast(`Polish failed: ${err.message} — using master as-is`);
     _enterLyricsPhase();
   }
@@ -947,60 +956,224 @@ async function _finalizeWithAI() {
 // ---------------------------------------------------------------------------
 
 async function _enterLyricsPhase() {
-  _inEffectsMode = false;
-  _inLyricsMode  = true;
-  _lyricsText    = "";
+  _inEffectsMode   = false;
+  _inLyricsMode    = true;
+  _lyricsText      = "";
+  _lyricsFinishing = false;
 
   $title.textContent = "Add Lyrics?";
-  $sub.textContent   = "👍👍 speak lyrics · ✊ skip & export";
+  $sub.textContent   = "🎙 Speak, then ✊ fist to finish";
 
   $sections.innerHTML = `
-    <p class="fx-hint">Hold both thumbs up and speak your lyrics.<br>
-    The music will keep playing while you talk.<br><br>
-    Make a fist to skip and just download the track.</p>
+    <p class="fx-hint">Click <strong>Speak Lyrics</strong> and say your lyrics.<br>
+    Make a <strong>fist ✊</strong> (or click Done) when finished —<br>
+    a 3-second pause lets the mic close cleanly before processing.<br><br>
+    Skip to just download the instrumental.</p>
   `;
 
   document.querySelector(".footer").innerHTML = `
-    <button class="btn" id="btn-skip-lyrics">✊ Skip</button>
+    <button class="btn" id="btn-skip-lyrics">Skip</button>
     <button class="btn primary" id="btn-speak-lyrics">🎙 Speak Lyrics</button>
   `;
   document.getElementById("btn-skip-lyrics").addEventListener("click", () => _exportFinal());
   document.getElementById("btn-speak-lyrics").addEventListener("click", _captureLyrics);
 }
 
-function _captureLyrics() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { showToast("Speech not supported — exporting as-is"); _exportFinal(); return; }
+// Called by fist gesture or Done button — countdown then process
+function _finishLyricsCapture() {
+  if (_lyricsFinishing || !_lyricsRecording) return;
+  _lyricsFinishing = true;
 
-  $sub.textContent = "🎙 Listening… speak your lyrics";
-  document.querySelector(".footer").innerHTML = `<button class="btn primary" id="btn-stop-lyrics">Done ✓</button>`;
+  // Flush textarea if that fallback is active
+  const ta = document.getElementById("lyrics-input");
+  if (ta) _lyricsText = ta.value;
 
-  const rec = new SR();
-  rec.continuous     = true;
-  rec.interimResults = true;
-  rec.lang           = "en-US";
-
-  let final = "";
-  rec.onresult = (e) => {
-    let interim = "";
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) final += e.results[i][0].transcript + " ";
-      else interim = e.results[i][0].transcript;
-    }
-    _lyricsText = final;
-    $sections.innerHTML = `<p class="fx-lyrics">${final}<span style="opacity:0.5">${interim}</span></p>`;
+  const btn = document.getElementById("btn-stop-lyrics");
+  let n = 3;
+  const update = () => {
+    $sub.textContent = `Closing mic in ${n}…`;
+    if (btn) btn.textContent = `Done in ${n}…`;
   };
+  update();
 
-  rec.onerror = () => { _exportFinal(); };
-  rec.start();
-
-  document.getElementById("btn-stop-lyrics").addEventListener("click", () => {
-    rec.stop();
-    _exportFinal();
-  });
+  const tick = setInterval(() => {
+    n--;
+    if (n > 0) {
+      update();
+    } else {
+      clearInterval(tick);
+      _lyricsRecording = false;
+      _lyricsFinishing = false;
+      if (_lyricsStopFn) { _lyricsStopFn(); _lyricsStopFn = null; }
+      _mixLyricsAndExport();
+    }
+  }, 1000);
 }
 
-function _exportFinal() {
+function _captureLyrics() {
+  if (_lyricsRecording) return;
+  _lyricsRecording = true;
+  _lyricsFinishing = false;
+  $sub.textContent = "🎙 Speak lyrics — ✊ fist when done";
+  document.querySelector(".footer").innerHTML = `<button class="btn primary" id="btn-stop-lyrics">✊ Done (3s)</button>`;
+
+  let _wsResources = null;  // { ws, audioCtx, processor, micStream }
+  let _activeSR    = null;  // Web Speech rec instance
+
+  function _stopAll() {
+    if (_activeSR) { try { _activeSR.stop(); } catch (_) {} _activeSR = null; }
+    if (_wsResources) {
+      const { ws, audioCtx, processor, micStream } = _wsResources;
+      try { if (processor) processor.disconnect(); } catch (_) {}
+      try { if (audioCtx)  audioCtx.close();        } catch (_) {}
+      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+      _wsResources = null;
+    }
+  }
+
+  // Expose so _finishLyricsCapture (called by fist gesture) can reach it
+  _lyricsStopFn = _stopAll;
+
+  document.getElementById("btn-stop-lyrics").addEventListener("click", () => {
+    _finishLyricsCapture();
+  });
+
+  // Fallback #2: textarea for typed lyrics
+  function _fallbackToTextarea() {
+    if (!_lyricsRecording) return;
+    showToast("No speech API — type your lyrics");
+    $sections.innerHTML = `<textarea id="lyrics-input"
+      style="width:100%;height:110px;background:rgba(255,255,255,0.05);border:1px solid
+      rgba(255,255,255,0.15);border-radius:8px;color:#fff;padding:10px;
+      font:400 13px/1.5 'Inter',sans-serif;resize:none"
+      placeholder="Type your lyrics here…"></textarea>`;
+    document.getElementById("lyrics-input")?.focus();
+  }
+
+  // Fallback #1: Web Speech API
+  function _fallbackToWebSpeech() {
+    if (!_lyricsRecording) return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { _fallbackToTextarea(); return; }
+    const rec = new SR();
+    rec.continuous = true; rec.interimResults = true; rec.lang = "en-US";
+    let final = "";
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript + " ";
+        else interim = e.results[i][0].transcript;
+      }
+      _lyricsText = final;
+      $sections.innerHTML = `<p class="fx-lyrics">${final}<span style="opacity:0.5">${interim}</span></p>`;
+    };
+    rec.onerror = () => { if (_lyricsRecording) _fallbackToTextarea(); };
+    rec.start();
+    _activeSR = rec;
+  }
+
+  // Primary: ElevenLabs WebSocket STT (same AudioContext fix as curtain trigger)
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    const ws = new WebSocket(`ws://${location.host}/ws/stt`);
+    _wsResources = { ws, audioCtx: null, processor: null, micStream: stream };
+
+    ws.onopen = () => {
+      try {
+        const audioCtx  = new AudioContext();
+        _wsResources.audioCtx = audioCtx;
+        const nativeRate = audioCtx.sampleRate;
+        const src = audioCtx.createMediaStreamSource(stream);
+        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        _wsResources.processor = processor;
+        processor.onaudioprocess = (e) => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          const f32 = e.inputBuffer.getChannelData(0);
+          const ratio = nativeRate / 16000;
+          const targetLen = Math.floor(f32.length / ratio);
+          const i16 = new Int16Array(targetLen);
+          for (let i = 0; i < targetLen; i++) {
+            const s = f32[Math.round(i * ratio)];
+            i16[i] = Math.max(-32768, Math.min(32767, Math.round(s * 32767)));
+          }
+          if (i16.length > 0) ws.send(i16.buffer);
+        };
+        src.connect(processor);
+        processor.connect(audioCtx.destination);
+      } catch (err) {
+        console.warn("[lyrics-stt] AudioContext error:", err);
+        _stopAll();
+        _fallbackToWebSpeech();
+      }
+    };
+
+    let accumulated  = "";
+    let lastPartial  = "";
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.error === "no_token") { _stopAll(); _fallbackToWebSpeech(); return; }
+      if (msg.type === "committed" && msg.text) {
+        accumulated += msg.text + " ";
+        lastPartial  = "";
+      } else if (msg.type === "partial" && msg.text) {
+        lastPartial = msg.text;
+      }
+      // Always mirror what's on screen — so Done captures everything visible
+      _lyricsText = (accumulated + lastPartial).trim();
+      const display = accumulated
+        + (lastPartial ? `<span style="opacity:0.5">${lastPartial}</span>` : "");
+      $sections.innerHTML = `<p class="fx-lyrics">${display}</p>`;
+    };
+
+    ws.onerror = () => { _stopAll(); _fallbackToWebSpeech(); };
+  }).catch(() => _fallbackToWebSpeech());
+}
+
+async function _mixLyricsAndExport() {
+  if (!_lyricsText.trim()) { _exportFinal(); return; }
+
+  $title.textContent = "Generating Song…";
+  $sub.textContent   = "Starting ACE-Step…";
+  $sections.innerHTML = `<p class="fx-hint">Composing a warm, cohesive song with your lyrics.<br>Runs on Replicate — takes 60–120 seconds.</p>`;
+  document.querySelector(".footer").innerHTML = "";
+
+  // Live elapsed timer so the user knows it's actively processing
+  let elapsed = 0;
+  const dots = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+  const timer = setInterval(() => {
+    elapsed++;
+    const spin = dots[elapsed % dots.length];
+    $sub.textContent = `${spin} Composing… ${elapsed}s`;
+  }, 1000);
+
+  try {
+    const resp = await fetch("/api/lyrics/mix", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ lyrics: _lyricsText }),
+    });
+    if (!resp.ok) throw new Error("Lyrics mix request failed");
+
+    await new Promise((resolve, reject) => {
+      const h = setInterval(async () => {
+        const d = await fetch("/api/lyrics/mix/status").then(r => r.json());
+        if (d.done)  { clearInterval(h); resolve(); }
+        if (d.error) { clearInterval(h); reject(new Error(d.error)); }
+      }, 1000);
+    });
+
+    clearInterval(timer);
+    $sub.textContent = `Done in ${elapsed}s`;
+    showToast("✓ Vocals mixed in!");
+    _exportFinal(true);
+  } catch (err) {
+    clearInterval(timer);
+    showToast(`Vocals failed: ${err.message} — exporting without vocals`);
+    _exportFinal(false);
+  }
+}
+
+function _exportFinal(withLyrics = false) {
   if (_effectsSource) { try { _effectsSource.stop(); } catch (_) {} }
   _inLyricsMode = false;
 
@@ -1018,23 +1191,19 @@ function _exportFinal() {
 
   if (_lyricsText.trim()) {
     $sections.innerHTML = `
-      <p class="fx-hint" style="color:rgba(255,255,255,0.7)">Lyrics captured:</p>
+      <p class="fx-hint" style="color:rgba(255,255,255,0.7)">Lyrics ${withLyrics ? "mixed in" : "captured"}:</p>
       <p class="fx-lyrics">${_lyricsText}</p>
     `;
-    // Download lyrics as text file
-    const lyricBlob = new Blob([_lyricsText], { type: "text/plain" });
-    const lyricUrl  = URL.createObjectURL(lyricBlob);
-    const la = document.createElement("a");
-    la.href = lyricUrl; la.download = "lyrics.txt"; la.click();
-    URL.revokeObjectURL(lyricUrl);
   } else {
     $sections.innerHTML = "";
   }
 
-  // Download final WAV (AI-polished, or master if finalize wasn't run)
+  // Download final WAV — with-vocals version if lyrics were mixed, AI-polish otherwise
+  const apiPath  = withLyrics ? `/api/lyrics/mix/file` : `/api/finalize/file`;
+  const filename = withLyrics ? "composition_with_lyrics.wav" : "composition_final.wav";
   const a = document.createElement("a");
-  a.href = `/api/finalize/file?t=${Date.now()}`;
-  a.download = "composition_final.wav";
+  a.href = `${apiPath}?t=${Date.now()}`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -1060,6 +1229,199 @@ async function publishSong() {
     console.warn("[panel] publish failed:", err);
     showToast("Publish failed — is the web app running on :3000?");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Curtain opening — voice command launches instruments onto stage
+// ---------------------------------------------------------------------------
+
+function _playDramaticSpawnSound() {
+  try {
+    const ctx = new AudioContext();
+    const now = ctx.currentTime;
+
+    // Timpani-like boom: filtered noise burst at ~80 Hz
+    const drumLen = Math.floor(ctx.sampleRate * 0.6);
+    const drumBuf = ctx.createBuffer(1, drumLen, ctx.sampleRate);
+    const drumData = drumBuf.getChannelData(0);
+    for (let i = 0; i < drumLen; i++)
+      drumData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (drumLen * 0.1));
+    const drumSrc = ctx.createBufferSource();
+    drumSrc.buffer = drumBuf;
+    const drumBP = ctx.createBiquadFilter();
+    drumBP.type = "bandpass"; drumBP.frequency.value = 80; drumBP.Q.value = 2;
+    const drumGain = ctx.createGain();
+    drumGain.gain.setValueAtTime(1.5, now);
+    drumGain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    drumSrc.connect(drumBP); drumBP.connect(drumGain); drumGain.connect(ctx.destination);
+    drumSrc.start(now);
+
+    // Brass chord stab: C minor (C3 Eb3 G3 C4), staggered attack
+    for (const [freq, startT] of [[130.81, 0.03], [155.56, 0.05], [196.00, 0.04], [261.63, 0.06]]) {
+      const osc = ctx.createOscillator();
+      osc.type = "sawtooth"; osc.frequency.value = freq;
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass"; lp.frequency.value = 1600; lp.Q.value = 0.8;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, now);
+      g.gain.linearRampToValueAtTime(0.11, now + startT + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 2.4);
+      osc.connect(lp); lp.connect(g); g.connect(ctx.destination);
+      osc.start(now + startT); osc.stop(now + 2.5);
+    }
+
+    // Cymbal shimmer: high-passed white noise burst
+    const shimLen = Math.floor(ctx.sampleRate * 0.25);
+    const shimBuf = ctx.createBuffer(1, shimLen, ctx.sampleRate);
+    const shimData = shimBuf.getChannelData(0);
+    for (let i = 0; i < shimLen; i++)
+      shimData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (shimLen * 0.25));
+    const shimSrc = ctx.createBufferSource();
+    shimSrc.buffer = shimBuf;
+    const shimHP = ctx.createBiquadFilter();
+    shimHP.type = "highpass"; shimHP.frequency.value = 5000;
+    const shimG = ctx.createGain(); shimG.gain.value = 0.35;
+    shimSrc.connect(shimHP); shimHP.connect(shimG); shimG.connect(ctx.destination);
+    shimSrc.start(now);
+
+    setTimeout(() => ctx.close(), 4000);
+  } catch (_) {}
+}
+
+function _launchInstruments() {
+  if (_instrumentsLaunched) return;
+  _instrumentsLaunched = true;
+  _playDramaticSpawnSound();
+  // Stagger each instrument family 350 ms apart so they don't all crash in at once
+  CORE_TRACKS.forEach((t, i) => {
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("instrument:add", { detail: { kind: t.id } }));
+    }, i * 350);
+  });
+  // Open panel after the last family has had time to animate in
+  setTimeout(() => $panel.classList.remove("collapsed"), CORE_TRACKS.length * 350 + 500);
+}
+
+// Primary: ElevenLabs Scribe v2 Realtime via WebSocket
+async function _startElevenLabsSTT() {
+  if (_instrumentsLaunched) return;
+
+  let ws       = null;
+  let audioCtx = null;
+  let micStream = null;
+  let processor = null;
+
+  function _cleanup() {
+    try { if (processor) processor.disconnect(); } catch (_) {}
+    try { if (audioCtx)  audioCtx.close();        } catch (_) {}
+    if (micStream) micStream.getTracks().forEach(t => t.stop());
+    if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+  }
+
+  // Safety timeout — launch instruments even if voice never fires
+  const timeout = setTimeout(() => {
+    if (!_instrumentsLaunched) { _cleanup(); _launchInstruments(); }
+  }, 15000);
+
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    ws = new WebSocket(`ws://${location.host}/ws/stt`);
+
+    ws.onopen = () => {
+      try {
+        // Don't force sampleRate — PulseAudio on Linux only supports 44100/48000
+        audioCtx = new AudioContext();
+        const nativeRate = audioCtx.sampleRate;
+        const src = audioCtx.createMediaStreamSource(micStream);
+        processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+        processor.onaudioprocess = (e) => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          const f32 = e.inputBuffer.getChannelData(0);
+          // Downsample native rate → 16 kHz before sending to ElevenLabs
+          const ratio     = nativeRate / 16000;
+          const targetLen = Math.floor(f32.length / ratio);
+          const i16       = new Int16Array(targetLen);
+          for (let i = 0; i < targetLen; i++) {
+            const s = f32[Math.round(i * ratio)];
+            i16[i] = Math.max(-32768, Math.min(32767, Math.round(s * 32767)));
+          }
+          if (i16.length > 0) ws.send(i16.buffer);
+        };
+        src.connect(processor);
+        processor.connect(audioCtx.destination);
+      } catch (err) {
+        console.warn("[stt] AudioContext setup error — falling back to Web Speech:", err);
+        _cleanup();
+        clearTimeout(timeout);
+        _fallbackVoiceCommand();
+      }
+    };
+
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.error === "no_token") {
+        // No ElevenLabs token — fall back to Web Speech API
+        _cleanup();
+        clearTimeout(timeout);
+        _fallbackVoiceCommand();
+        return;
+      }
+      const heard = (msg.text || "").toLowerCase();
+      if (heard) $voicePrompt.textContent = `🎙 "${msg.text}"`;
+      const triggered = ["instrument","give","start","orchestra","music","begin","play","bring","my"].some(w => heard.includes(w));
+      if (triggered && (msg.type === "committed" || heard.includes("instrument"))) {
+        clearTimeout(timeout);
+        $voicePrompt.textContent = "✓ Here they come!";
+        setTimeout(() => $voicePrompt.classList.add("hidden"), 1800);
+        _cleanup();
+        _launchInstruments();
+      }
+    };
+
+    ws.onerror = () => { _cleanup(); clearTimeout(timeout); _fallbackVoiceCommand(); };
+    ws.onclose = () => {};
+
+  } catch (err) {
+    console.warn("[stt] ElevenLabs init failed:", err);
+    _cleanup();
+    clearTimeout(timeout);
+    _fallbackVoiceCommand();
+  }
+}
+
+// Fallback: Web Speech API (used if no ElevenLabs token or WebSocket fails)
+function _fallbackVoiceCommand() {
+  if (_voiceStartListening || _instrumentsLaunched) return;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { _launchInstruments(); $voicePrompt.classList.add("hidden"); return; }
+
+  _voiceStartListening = true;
+  const rec = new SR();
+  rec.continuous      = false;
+  rec.interimResults  = false;
+  rec.lang            = "en-US";
+  rec.maxAlternatives = 3;
+
+  rec.onresult = (e) => {
+    const heard = Array.from(e.results[0]).map(a => a.transcript.toLowerCase()).join(" ");
+    console.log("[voice] curtain heard:", heard);
+    const triggered = ["instrument","give","start","orchestra","music","begin","play"].some(w => heard.includes(w));
+    if (triggered) {
+      $voicePrompt.textContent = "✓ Here they come!";
+      setTimeout(() => $voicePrompt.classList.add("hidden"), 1800);
+      _launchInstruments();
+    } else {
+      $voicePrompt.textContent = "🎙 Say \"Give me my instruments\"";
+      _voiceStartListening = false;
+      setTimeout(_fallbackVoiceCommand, 300);
+    }
+  };
+
+  rec.onerror = () => { _voiceStartListening = false; setTimeout(_fallbackVoiceCommand, 600); };
+  rec.onend   = () => { _voiceStartListening = false; };
+  rec.start();
 }
 
 // ---------------------------------------------------------------------------
@@ -1169,7 +1531,16 @@ window.addEventListener("instrument:hover", (e) => {
     r.classList.toggle("pointed", r.dataset.trackId === e.detail.kind));
 });
 
-// Both hands thumbs-up → approve review / finalize conduct / AI polish / done
+// Curtain opens → wait for ElevenLabs voice command "Give me my instruments"
+window.addEventListener("gesture:curtain-open", () => {
+  setTimeout(() => {
+    $voicePrompt.textContent = "🎙 Say \"Give me my instruments\"";
+    $voicePrompt.classList.remove("hidden");
+    _startElevenLabsSTT();
+  }, 1500);
+});
+
+// Both hands thumbs-up → approve review / finalize conduct / AI polish / speak lyrics
 window.addEventListener("gesture:both-thumbs-up", () => {
   if (_inReviewMode) {
     _reviewApprove();
@@ -1178,6 +1549,8 @@ window.addEventListener("gesture:both-thumbs-up", () => {
     _finalizeWithAI();
   } else if (_inConductMode) {
     _finalizeConduct();
+  } else if (_inLyricsMode && !_lyricsRecording) {
+    _captureLyrics();
   }
 });
 
@@ -1193,10 +1566,11 @@ window.addEventListener("gesture:palm-rotate", (e) => {
   _updateFxUI();
 });
 
-// Fist (one-shot) → switch fx param (effects mode) or skip lyrics (lyrics mode)
+// Fist (one-shot) → switch fx param (effects) / finish lyrics with countdown / skip if not recording
 window.addEventListener("gesture:fist", () => {
   if (_inEffectsMode) { _switchFxParam(); return; }
-  if (_inLyricsMode)  { _exportFinal();   return; }
+  if (_inLyricsMode && _lyricsRecording) { _finishLyricsCapture(); return; }
+  if (_inLyricsMode) { _exportFinal(); return; }
 });
 
 // Fist hold → voice add instrument (only in setup mode)
@@ -1216,6 +1590,66 @@ window.addEventListener("gesture:thumbs-up", () => {
     if (done > 0) startRender();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Demo shortcut: press P to advance the current phase instantly
+// ---------------------------------------------------------------------------
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "p" && e.key !== "P") return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  _demoPressP();
+});
+
+async function _demoPressP() {
+  // Curtain / pre-launch
+  if (!_instrumentsLaunched) {
+    showToast("Demo: launching instruments");
+    _launchInstruments();
+    return;
+  }
+  // Review: approve current stem
+  if (_inReviewMode)   { _reviewApprove();   return; }
+  // Conduct: finalize
+  if (_inConductMode)  { _finalizeConduct(); return; }
+  // Effects: proceed to AI polish with current values
+  if (_inEffectsMode)  { _inEffectsMode = false; _finalizeWithAI(); return; }
+  // Polish: let it finish (no-op)
+  if (_inPolishMode)   { showToast("Polishing… please wait"); return; }
+  // Lyrics: skip and export
+  if (_inLyricsMode)   { _exportFinal(false); return; }
+
+  // Setup: fill missing hums from last recorded hum, then render
+  if (!renderStarted) {
+    showToast("Demo: filling hums + rendering…");
+    try {
+      await fetch("/api/demo/fill-and-render", { method: "POST" });
+      renderStarted       = true;
+      $harmonize.textContent = "Rendering…";
+      $harmonize.disabled    = true;
+      const poll = setInterval(async () => {
+        try {
+          const d = await fetch("/api/render/status").then(r => r.json());
+          if (d.done)  { clearInterval(poll); onRenderDone(); }
+          if (d.error) {
+            clearInterval(poll);
+            showToast("Render error: " + d.error);
+            renderStarted          = false;
+            $harmonize.textContent = "Harmonize ✦";
+            $harmonize.disabled    = false;
+          }
+        } catch (_) {}
+      }, 2000);
+    } catch (err) {
+      showToast("Demo error: " + err.message);
+    }
+    return;
+  }
+
+  // Render done — launch conduct if not yet started
+  const btn = document.querySelector(".footer button");
+  if (btn?.textContent.includes("Conduct")) launchConduct();
+}
 
 // ---------------------------------------------------------------------------
 // Go

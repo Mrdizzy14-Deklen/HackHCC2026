@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -71,6 +71,9 @@ class _Ctx:
         self.finalize_busy  = False
         self.finalize_done  = False
         self.finalize_error: str | None = None
+        self.lyrics_busy  = False
+        self.lyrics_done  = False
+        self.lyrics_error: str | None = None
 
 
 @asynccontextmanager
@@ -356,6 +359,48 @@ async def render_status():
     }
 
 
+@app.post("/api/render/{track_id}")
+async def start_single_render(track_id: str):
+    """Re-render just one stem — used during conduct/review re-hum (much faster)."""
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+    ctx: _Ctx = app.state.ctx
+    if ctx.render_busy:
+        raise HTTPException(409, "Render already running")
+
+    ctx.render_busy  = True
+    ctx.render_done  = False
+    ctx.render_error = None
+
+    def _render():
+        try:
+            from hackhcc.phases.setup.render import (
+                render_track_stem,
+                _find_primary_melody_hum,
+                _MELODIC_INSTRUMENTS,
+            )
+            comp  = load_composition(sid)
+            track = next((t for t in comp.tracks if t.id == track_id), None)
+            if not track:
+                raise ValueError(f"Track '{track_id}' not found")
+            shared_hum = _find_primary_melody_hum(comp, sid)
+            is_melodic = track.instrument.lower() in _MELODIC_INSTRUMENTS
+            track.stem_path = render_track_stem(
+                sid, track, comp,
+                shared_melody_hum=(shared_hum if is_melodic else None),
+            )
+            save_composition(comp)
+            ctx.render_done = True
+        except Exception as exc:
+            ctx.render_error = str(exc)
+        finally:
+            ctx.render_busy = False
+
+    threading.Thread(target=_render, daemon=True).start()
+    return {"status": "rendering", "track_id": track_id}
+
+
 # --- Conduct ----------------------------------------------------------------
 
 @app.get("/api/stems/{track_id}")
@@ -428,6 +473,189 @@ async def serve_master():
     if not path.is_file():
         raise HTTPException(404, "No master yet — call POST /api/master first")
     return FileResponse(str(path), media_type="audio/wav", filename="master.wav")
+
+
+# --- Lyrics vocal mix  (primary: ACE-Step / fallback: ElevenLabs TTS) ---
+
+ACE_STEP_VERSION = "280fc4f9ee507577f880a167f639c02622421d8fecf492454320311217b688f1"
+
+
+def _do_mix_lyrics_ace_step(sid: str, lyrics: str, final_path: Path, out: Path) -> None:
+    """
+    Generate a full song with real vocals using ACE-Step (lucataco/ace-step).
+
+    ACE-Step is text-to-music: it takes tags (style/mood/instruments) + lyrics
+    and generates a cohesive song with actual singing.  It does NOT condition on
+    existing audio, so the output is a fresh generation — but the mood, BPM, and
+    instrument palette from the user's composition are encoded in the tags so the
+    style is consistent.
+    """
+    import replicate
+    import numpy as np
+    from scipy.io import wavfile
+    from hackhcc.composition import load_composition, session_dir
+    from hackhcc.phases.setup.render import _audio_from_url_or_path, OUTPUT_SR
+
+    comp        = load_composition(sid)
+    mood        = comp.mood or "upbeat"
+    bpm         = comp.bpm or 120
+    instruments = [t.instrument for t in comp.tracks]
+
+    # ACE-Step tags: comma-separated descriptors (no full sentences)
+    tags = ", ".join(filter(None, [
+        mood,
+        "vocal",
+        "singer",
+        "singing",
+        "lead vocals",
+        "lyrics",
+        *instruments,
+        f"{bpm} bpm",
+        "orchestral",
+        "studio quality",
+        "warm",
+        "cohesive",
+    ]))
+
+    # Wrap plain text in structural tags so the model knows verse/chorus layout
+    fmt_lyrics = lyrics.strip()
+    if fmt_lyrics and not fmt_lyrics.startswith("["):
+        lines = fmt_lyrics.splitlines()
+        mid   = max(1, len(lines) // 2)
+        fmt_lyrics = (
+            "[verse]\n" + "\n".join(lines[:mid])
+            + "\n\n[chorus]\n" + "\n".join(lines[mid:])
+        )
+
+    ace_ref = f"lucataco/ace-step:{ACE_STEP_VERSION}"
+    print(f"  [lyrics-ace] Generating song with vocals — tags: {tags[:60]}…")
+    print(f"  [lyrics-ace] Lyrics preview: {fmt_lyrics[:80]}…")
+
+    output = replicate.run(
+        ace_ref,
+        input={
+            "tags":                 tags,
+            "lyrics":               fmt_lyrics,
+            "duration":             30,
+            "guidance_scale":       7.0,
+            "lyric_guidance_scale": 7.0,   # 5–10 needed for actual vocal presence
+            "number_of_steps":      100,
+            "seed":                 -1,
+        },
+    )
+
+    # Replicate may return a FileOutput object or a plain URL string
+    item = output[0] if isinstance(output, list) else output
+    url  = item.url if hasattr(item, "url") else str(item)
+
+    # Download to a temp file, then load with librosa (handles WAV + MP3)
+    import urllib.request, librosa
+    from scipy.signal import butter, sosfiltfilt
+    tmp = session_dir(sid) / "_ace_step_tmp.bin"
+    try:
+        urllib.request.urlretrieve(url, str(tmp))
+        audio, sr = librosa.load(str(tmp), sr=44_100, mono=True)
+
+        # Warmth pass: gentle high-shelf rolloff above 10 kHz reduces harshness,
+        # then blend 65% filtered + 35% original to keep transient clarity
+        sos    = butter(2, 10_000, fs=44_100, btype="low", output="sos")
+        warm   = sosfiltfilt(sos, audio)
+        audio  = warm * 0.65 + audio * 0.35
+
+        # Normalize to -1 dBFS so it's loud but never clips
+        peak  = np.max(np.abs(audio)) or 1.0
+        audio = audio / peak * 0.891   # 0.891 ≈ -1 dBFS
+
+        wavfile.write(str(out), 44_100, (audio * 32767).astype(np.int16))
+        print(f"  [lyrics-ace] Done → {out.name}")
+    finally:
+        if tmp.is_file():
+            tmp.unlink()
+
+
+def _do_mix_lyrics_tts(sid: str, lyrics: str, final_path: Path, out: Path) -> None:
+    """Fallback: ElevenLabs TTS speech overlaid on final.wav."""
+    import shutil, tempfile, os as _os
+    import numpy as np
+    from hackhcc.composition import session_dir
+
+    token = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
+    if not token:
+        print("  [lyrics] No ElevenLabs key — copying final.wav as-is")
+        shutil.copy(str(final_path), str(out))
+        return
+
+    try:
+        import librosa
+        from elevenlabs.client import ElevenLabs
+
+        client = ElevenLabs(api_key=token)
+        print("  [lyrics] ElevenLabs TTS fallback…")
+        mp3_bytes = b"".join(
+            client.text_to_speech.convert(
+                voice_id="21m00Tcm4TlvDq8ikWAM",
+                text=lyrics.strip(),
+                model_id="eleven_multilingual_v2",
+            )
+        )
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tf:
+            tf.write(mp3_bytes)
+            tmp_mp3 = tf.name
+        try:
+            vocals, sr_v = librosa.load(tmp_mp3, sr=None, mono=True)
+        finally:
+            _os.unlink(tmp_mp3)
+
+        music, sr_m = librosa.load(str(final_path), sr=None, mono=True)
+        if sr_v != sr_m:
+            vocals = librosa.resample(vocals, orig_sr=sr_v, target_sr=sr_m)
+        max_len  = max(len(music), len(vocals))
+        mixed    = (
+            np.pad(music,  (0, max_len - len(music)))  * 0.55
+            + np.pad(vocals, (0, max_len - len(vocals))) * 0.80
+        )
+        peak = float(np.max(np.abs(mixed)))
+        if peak > 0:
+            mixed = mixed / peak * 0.9
+        try:
+            import soundfile as sf
+            sf.write(str(out), mixed, sr_m)
+        except ImportError:
+            from scipy.io import wavfile
+            wavfile.write(str(out), sr_m, mixed.astype("float32"))
+        print("  [lyrics] TTS vocals mixed → final_with_lyrics.wav")
+    except Exception as exc:
+        print(f"  [lyrics] TTS failed ({exc}) — copying final.wav")
+        shutil.copy(str(final_path), str(out))
+
+
+def _do_mix_lyrics(sid: str, lyrics: str) -> Path:
+    import shutil
+    from hackhcc.composition import session_dir
+
+    final_path = session_dir(sid) / "final.wav"
+    if not final_path.is_file():
+        raise RuntimeError("No final.wav — run finalize first")
+
+    out = session_dir(sid) / "final_with_lyrics.wav"
+
+    if not lyrics.strip():
+        shutil.copy(str(final_path), str(out))
+        return out
+
+    # Primary: ACE-Step (Replicate) — generates cohesive song from music + lyrics
+    replicate_token = (os.getenv("REPLICATE_API_TOKEN") or "").strip()
+    if replicate_token:
+        try:
+            import replicate as _r  # confirm importable before spawning thread work
+            _do_mix_lyrics_ace_step(sid, lyrics, final_path, out)
+            return out
+        except Exception as exc:
+            print(f"  [lyrics] ACE-Step failed ({exc}) — falling back to ElevenLabs TTS")
+
+    # Fallback: ElevenLabs TTS speech overlaid on final.wav
+    _do_mix_lyrics_tts(sid, lyrics, final_path, out)
+    return out
 
 
 # --- AI Finalize  (master.wav → MusicGen melody conditioning → final.wav) ----
@@ -522,6 +750,196 @@ async def serve_final():
     if not path.is_file():
         raise HTTPException(404, "No final.wav yet — call POST /api/finalize first")
     return FileResponse(str(path), media_type="audio/wav", filename="composition_final.wav")
+
+
+# --- Lyrics vocal mix ---
+
+class _LyricsMixBody(BaseModel):
+    lyrics: str
+
+
+@app.post("/api/lyrics/mix")
+async def mix_lyrics(body: _LyricsMixBody):
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+    ctx: _Ctx = app.state.ctx
+    if ctx.lyrics_busy:
+        raise HTTPException(409, "Lyrics mix already running")
+    ctx.lyrics_busy  = True
+    ctx.lyrics_done  = False
+    ctx.lyrics_error = None
+
+    def _mix():
+        try:
+            _do_mix_lyrics(sid, body.lyrics)
+            ctx.lyrics_done = True
+        except Exception as exc:
+            ctx.lyrics_error = str(exc)
+        finally:
+            ctx.lyrics_busy = False
+
+    threading.Thread(target=_mix, daemon=True).start()
+    return {"status": "mixing_lyrics"}
+
+
+@app.get("/api/lyrics/mix/status")
+async def lyrics_mix_status():
+    ctx: _Ctx = app.state.ctx
+    return {"busy": ctx.lyrics_busy, "done": ctx.lyrics_done, "error": ctx.lyrics_error}
+
+
+@app.get("/api/lyrics/mix/file")
+async def serve_lyrics_mix():
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+    from hackhcc.composition import session_dir
+    path = session_dir(sid) / "final_with_lyrics.wav"
+    if not path.is_file():
+        raise HTTPException(404, "No lyrics mix yet — call POST /api/lyrics/mix first")
+    return FileResponse(str(path), media_type="audio/wav", filename="composition_with_lyrics.wav")
+
+
+# --- ElevenLabs realtime STT  (browser PCM → Scribe v2 → transcript JSON) --------
+
+async def _drain_stt_queue(q: asyncio.Queue, ws: WebSocket) -> None:
+    try:
+        while True:
+            msg = await q.get()
+            try:
+                await ws.send_json(msg)
+            except Exception:
+                return
+    except asyncio.CancelledError:
+        pass
+
+
+@app.websocket("/ws/stt")
+async def stt_ws(websocket: WebSocket):
+    """Bridge browser Int16 PCM → ElevenLabs Scribe v2 Realtime → transcript JSON."""
+    import base64
+    await websocket.accept()
+
+    token = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
+    if not token:
+        await websocket.send_json({"error": "no_token"})
+        await websocket.close()
+        return
+
+    from elevenlabs import ElevenLabs, AudioFormat, RealtimeAudioOptions, CommitStrategy, RealtimeEvents
+
+    client = ElevenLabs(api_key=token)
+    options = RealtimeAudioOptions(
+        model_id="scribe_v2_realtime",
+        audio_format=AudioFormat.PCM_16000,
+        sample_rate=16_000,
+        commit_strategy=CommitStrategy.VAD,
+        language_code="en",
+    )
+
+    q: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def _on_partial(data: dict) -> None:
+        text = (data.get("text") or "").strip()
+        if text:
+            loop.call_soon_threadsafe(q.put_nowait, {"type": "partial", "text": text})
+
+    def _on_committed(data: dict) -> None:
+        text = (data.get("text") or "").strip()
+        if text:
+            loop.call_soon_threadsafe(q.put_nowait, {"type": "committed", "text": text})
+
+    try:
+        connection = await client.speech_to_text.realtime.connect(options)
+    except Exception as exc:
+        await websocket.send_json({"error": str(exc)})
+        await websocket.close()
+        return
+
+    connection.on(RealtimeEvents.PARTIAL_TRANSCRIPT,   _on_partial)
+    connection.on(RealtimeEvents.COMMITTED_TRANSCRIPT, _on_committed)
+
+    drain_task = asyncio.create_task(_drain_stt_queue(q, websocket))
+    try:
+        while True:
+            try:
+                pcm = await asyncio.wait_for(websocket.receive_bytes(), timeout=20.0)
+                payload = base64.b64encode(pcm).decode()
+                await connection.send({"audio_base_64": payload, "sample_rate": 16_000})
+            except (asyncio.TimeoutError, Exception):
+                break
+    finally:
+        drain_task.cancel()
+        await connection.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# --- Demo shortcut  (fill missing hums from last recording + render) ----------
+
+@app.post("/api/demo/fill-and-render")
+async def demo_fill_and_render():
+    """Demo shortcut: copy last valid hum to any unrecorded tracks, then render all."""
+    import shutil
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+    ctx: _Ctx = app.state.ctx
+    if ctx.render_busy:
+        return {"status": "already_rendering"}
+
+    ctx.render_busy  = True
+    ctx.render_done  = False
+    ctx.render_error = None
+
+    def _do():
+        try:
+            comp = load_composition(sid)
+            h_dir = hums_dir(sid)
+            h_dir.mkdir(parents=True, exist_ok=True)
+
+            # Find the most recently recorded hum to use as template
+            last_hum: Path | None = None
+            for t in comp.tracks:
+                p = h_dir / f"{t.id}.wav"
+                if p.is_file():
+                    last_hum = p
+
+            if last_hum:
+                changed = False
+                for t in comp.tracks:
+                    p = h_dir / f"{t.id}.wav"
+                    if not p.is_file():
+                        shutil.copy(str(last_hum), str(p))
+                        t.hum_path = f"hums/{t.id}.wav"
+                        changed = True
+                if changed:
+                    save_composition(comp)
+                    run_pitch_detection(sid)
+
+            run_render_stems(sid)
+            try:
+                comp2 = load_composition(sid)
+                comp2.flags["stems_complete"] = True
+                comp2.flags["setup_complete"] = True
+                comp2.flags["allow_conduct"]  = True
+                from hackhcc.composition import Phase
+                comp2.phase = Phase.CONDUCT.value
+                save_composition(comp2)
+            except Exception:
+                pass
+            ctx.render_done = True
+        except Exception as exc:
+            ctx.render_error = str(exc)
+        finally:
+            ctx.render_busy = False
+
+    threading.Thread(target=_do, daemon=True).start()
+    return {"status": "demo_rendering"}
 
 
 # --- Publish (Treble Trouble) — prefers your final.wav, then export, then stems ---

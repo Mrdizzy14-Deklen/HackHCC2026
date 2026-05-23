@@ -18,12 +18,15 @@ import {
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
 // ── Tuning ──────────────────────────────────────────────────────────────────
-const LOOP_MS        = 66;    // ~15 fps detection — better responsiveness, still CPU-light
+const LOOP_MS        = 33;    // ~30 fps detection — better responsiveness, still CPU-light
 const DWELL_MS       = 750;   // ms to hold a point before dwell-select fires
 const POINT_THR      = 40;    // grid cells for dwell stability
 const FIST_HOLD_MS   = 1500;  // ms to hold fist before voice is triggered
 const CURTAIN_DELAY  = 2500;  // ms after init before curtain gesture is live
                                // (prevents false-fire from background noise)
+const NDC_LERP       = 0.22;
+const GESTURE_HIST   = 3;     // frames for gesture hysteresis (reduces spurious fires)
+const PALM_EMIT_THR  = 0.04;  // min accumulated rotation (rad) before emitting palm-rotate
 
 let _landmarker    = null;
 let _video         = null;
@@ -52,7 +55,8 @@ let _fistStart  = 0;
 
 // Smoothed NDC for gesture:point — reduces scene raycaster jitter
 let _smoothX = 0, _smoothY = 0;
-const NDC_LERP = 0.4;
+let _gestureHist     = [];    // rolling buffer for hand-0 gesture classification
+let _palmDeltaAccum  = 0;     // accumulated rotation since last palm-rotate emit
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -132,6 +136,20 @@ function _classify(lm) {
   return "other";
 }
 
+// Majority-vote over last GESTURE_HIST frames to suppress single-frame flickers
+function _stableClassify(lm) {
+  const raw = _classify(lm);
+  _gestureHist.push(raw);
+  if (_gestureHist.length > GESTURE_HIST) _gestureHist.shift();
+  const counts = {};
+  for (const x of _gestureHist) counts[x] = (counts[x] ?? 0) + 1;
+  let best = raw, bestN = 0;
+  for (const [k, n] of Object.entries(counts)) {
+    if (n > bestN) { best = k; bestN = n; }
+  }
+  return best;
+}
+
 // Index fingertip → Three.js NDC, accounting for mirrored selfie camera
 function _toNDC(lm) {
   return {
@@ -166,6 +184,8 @@ function _process(results, now) {
     _fistStart = 0;
     _dwellCell = null;
     _dwellFired = false;
+    _gestureHist = [];
+    _palmDeltaAccum = 0;
     return;
   }
 
@@ -181,7 +201,7 @@ function _process(results, now) {
 
   // ── Both-hands thumbs-up → finalize (frees camera) ───────────────────
   const lm = hands[0];
-  const g  = _classify(lm);
+  const g  = _stableClassify(lm);
 
   if (hands.length >= 2 && g === "thumbs-up" && _classify(hands[1]) === "thumbs-up") {
     if (!_bothThumbsLatch) { _bothThumbsLatch = true; _emit("both-thumbs-up"); }
@@ -234,13 +254,19 @@ function _process(results, now) {
       let delta = angle - _palmAngle;
       if (delta >  Math.PI) delta -= 2 * Math.PI;
       if (delta < -Math.PI) delta += 2 * Math.PI;
-      if (Math.abs(delta) > 0.025) _emit("palm-rotate", { delta: -delta });
+      // Accumulate micro-movements, emit only when real rotation crosses threshold
+      if (Math.abs(delta) > 0.005) _palmDeltaAccum += delta;
+      if (Math.abs(_palmDeltaAccum) >= PALM_EMIT_THR) {
+        _emit("palm-rotate", { delta: -_palmDeltaAccum });
+        _palmDeltaAccum = 0;
+      }
     }
     _palmAngle   = angle;
     _thumbsLatch = false;
   } else {
-    _palmLatch  = false;
-    _palmAngle  = null;
+    _palmLatch      = false;
+    _palmAngle      = null;
+    _palmDeltaAccum = 0;
   }
 
   // ── Thumbs-up (one-shot) ──
