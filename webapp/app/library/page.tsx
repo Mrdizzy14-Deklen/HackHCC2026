@@ -8,6 +8,7 @@ import { PIECES, type Piece } from "@/lib/data";
 
 export default function LibraryPage() {
   const [search, setSearch] = useState("");
+  const [launching, setLaunching] = useState(false);
   // Start from mock so the grid is never empty; swap in DB songs once loaded.
   const [pieces, setPieces] = useState<Piece[]>(PIECES);
 
@@ -55,11 +56,20 @@ export default function LibraryPage() {
           </div>
           <button
             className="new-btn"
-            onClick={() => {
-              fetch("/api/launch-composer", { method: "POST" }).catch(() => {});
+            disabled={launching}
+            onClick={async () => {
+              setLaunching(true);
+              try {
+                await fetch("/api/launch-composer", { method: "POST" });
+                // Give uvicorn ~2 s to bind the port, then open the composer.
+                await new Promise((r) => setTimeout(r, 2000));
+                window.open("http://localhost:5000", "_blank");
+              } finally {
+                setLaunching(false);
+              }
             }}
           >
-            <span className="plus">+</span> Compose
+            <span className="plus">+</span> {launching ? "Launching…" : "Compose"}
           </button>
         </div>
       </div>

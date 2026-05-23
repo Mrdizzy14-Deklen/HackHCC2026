@@ -50,9 +50,14 @@ function songFromDoc(d: WithId<Document>): Piece {
 
 export async function getSongs(): Promise<Piece[]> {
   if (!isDbConfigured()) return PIECES;
-  const db = await getDb();
-  const docs = await db.collection("songs").find({}).sort({ likes: -1 }).toArray();
-  return docs.map(songFromDoc);
+  try {
+    const db = await getDb();
+    const docs = await db.collection("songs").find({}).sort({ likes: -1 }).toArray();
+    return docs.map(songFromDoc);
+  } catch {
+    console.warn("[db] getSongs fell back to mock data — Atlas unreachable");
+    return PIECES;
+  }
 }
 
 export interface LeaderboardData {
@@ -65,12 +70,18 @@ export async function getLeaderboard(): Promise<LeaderboardData> {
   if (!isDbConfigured()) {
     return { leaders: LEADERS, ranked: RANKED, conductorCount: 4812 };
   }
-  const db = await getDb();
-  const docs = (await db
-    .collection("conductors")
-    .find({})
-    .sort({ score: -1 })
-    .toArray()) as unknown as WithId<ConductorDoc>[];
+  let docs: WithId<ConductorDoc>[];
+  try {
+    const db = await getDb();
+    docs = (await db
+      .collection("conductors")
+      .find({})
+      .sort({ score: -1 })
+      .toArray()) as unknown as WithId<ConductorDoc>[];
+  } catch {
+    console.warn("[db] getLeaderboard fell back to mock data — Atlas unreachable");
+    return { leaders: LEADERS, ranked: RANKED, conductorCount: 4812 };
+  }
 
   const leaders: Leader[] = docs.slice(0, 3).map((c, i) => ({
     rank: i + 1,
@@ -151,8 +162,14 @@ export interface NewSong {
  * composer exists as a conductor (so likes on it count toward the leaderboard).
  */
 export async function createSong(input: NewSong): Promise<{ id: string }> {
-  if (!isDbConfigured()) throw new Error("DB not configured");
-  const db = await getDb();
+  if (!isDbConfigured()) return { id: `local_${Date.now()}` };
+  let db;
+  try {
+    db = await getDb();
+  } catch {
+    console.warn("[db] createSong fell back — Atlas unreachable");
+    return { id: `local_${Date.now()}` };
+  }
 
   const now = new Date();
   const date = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
@@ -169,7 +186,7 @@ export async function createSong(input: NewSong): Promise<{ id: string }> {
     live: false,
     likes: 0,
     saves: 0,
-    audioId: input.audioId ? new ObjectId(input.audioId) : null,
+    audioId: input.audioId && !input.audioId.startsWith("local_") ? new ObjectId(input.audioId) : (input.audioId ?? null),
     coverUrl: input.coverUrl,
     createdAt: now,
   };

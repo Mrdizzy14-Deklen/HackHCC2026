@@ -30,15 +30,23 @@ export async function POST() {
 
     const python = fs.existsSync(venvPy) ? venvPy : isWin ? "pythonw" : "python3";
 
-    const child = spawn(python, ["composer-app/main.py"], {
-      cwd: repoRoot,
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    child.unref();
+    // Check if the server is already up — skip spawning if so.
+    let alreadyRunning = false;
+    try {
+      const probe = await fetch("http://127.0.0.1:5000/api/ping", { signal: AbortSignal.timeout(800) });
+      alreadyRunning = probe.ok;
+    } catch { /* not running yet */ }
 
-    return NextResponse.json({ launched: true, via: "spawn" });
+    if (!alreadyRunning) {
+      const child = spawn(python, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", "5000"], {
+        cwd: composerDir,
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+    }
+
+    return NextResponse.json({ launched: true, alreadyRunning, via: "uvicorn" });
   } catch (err) {
     console.error("[launch-composer]", err);
     return NextResponse.json({ error: "failed to launch composer" }, { status: 500 });

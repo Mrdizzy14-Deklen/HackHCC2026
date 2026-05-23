@@ -536,7 +536,7 @@ def _do_mix_lyrics_ace_step(sid: str, lyrics: str, final_path: Path, out: Path) 
         input={
             "tags":                 tags,
             "lyrics":               fmt_lyrics,
-            "duration":             30,
+            "duration":             60,
             "guidance_scale":       7.0,
             "lyric_guidance_scale": 7.0,   # 5–10 needed for actual vocal presence
             "number_of_steps":      100,
