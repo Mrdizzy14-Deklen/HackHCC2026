@@ -2,8 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x09080c);  // deep cinematic dark
-
+scene.background = new THREE.Color(0x09080c);
 scene.fog = new THREE.FogExp2(0x09080c, 0.045);
 
 const camera = new THREE.PerspectiveCamera(
@@ -108,20 +107,20 @@ function createStageWash(color, intensity, pos, targetPos) {
   return light;
 }
 
-createStageWash(0xffa040, 90,  { x: 0,  y: 10, z: 6  }, { x: 0,  y: 0, z: -2 });
-createStageWash(0xff4090, 35,  { x: -9, y: 6,  z: 0  }, { x: -3, y: 0, z: -2 });
-createStageWash(0x00c8ff, 35,  { x: 9,  y: 6,  z: 0  }, { x: 3,  y: 0, z: -2 });
+createStageWash(0xffa040, 90,  { x: 0,  y: 10, z: 6  }, { x: 0,  y: 1.2, z: -2 });
+createStageWash(0xff4090, 35,  { x: -9, y: 6,  z: 0  }, { x: -3, y: 1.2, z: -2 });
+createStageWash(0x00c8ff, 35,  { x: 9,  y: 6,  z: 0  }, { x: 3,  y: 1.2, z: -2 });
 
 // Warm footlights — low-angle from pit edge for dramatic uplighting
 function createFootlight(x) {
   const fl = new THREE.SpotLight(0xffd580, 60);
-  fl.position.set(x, 0.4, 3.5);
+  fl.position.set(x, 2.2, 3.5);
   fl.angle   = Math.PI / 5;
   fl.penumbra = 0.6;
   fl.decay   = 1.8;
   fl.distance = 14;
   const ft = new THREE.Object3D();
-  ft.position.set(x * 0.4, 0, -1);
+  ft.position.set(x * 0.4, 1.2, -1);
   scene.add(ft);
   fl.target = ft;
   scene.add(fl);
@@ -198,7 +197,7 @@ buildOrchestraRisers();
 
 // Reflective stage floor — shows colored wash reflections
 (function addFloor() {
-  const geo = new THREE.PlaneGeometry(14, 14);
+  const geo = new THREE.PlaneGeometry(60, 60);
   const mat = new THREE.MeshStandardMaterial({ color: 0x0c0a0f, roughness: 0.08, metalness: 0.45 });
   const floor = new THREE.Mesh(geo, mat);
   floor.rotation.x = -Math.PI / 2;
