@@ -517,6 +517,7 @@ def run_conduct(session_id: str, *, enable_audio: bool = True) -> Composition:
                             bg_thread = run_bg(
                                 mix_stems, stem_list, volumes, _mix_out,
                                 target_bpm=session_bpm if session_bpm > 0 else None,
+                                target_duration_sec=GEN_DURATION_SEC,
                             )
                     else:
                         if gesture and gesture.hand_openness > 0.28:

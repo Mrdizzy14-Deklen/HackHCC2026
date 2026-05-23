@@ -15,7 +15,7 @@ sudo dnf install fluidsynth   # better piano stems (Fedora)
 ## Run (two steps)
 
 ```bash
-# 1 — mood, instruments, hum, pitch, render stems (~30s piano/audio per part)
+# 1 — mood, instruments, hum, pitch, render stems (5s instrument per part, looped to 30s at mix)
 python 1_setup.py -s mysong --text --mood upbeat --instruments piano
 
 # 2 — camera: raise hand = pitch up, open hand = tempo up (Q quit, S save)

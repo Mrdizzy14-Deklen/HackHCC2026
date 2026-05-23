@@ -38,7 +38,12 @@ from hackhcc.composition import (
 )
 
 OUTPUT_SR = 44_100
-GEN_DURATION_SEC = 30
+# Each instrument is "converted" from its ~5 s hum into a short instrument stem.
+# Rendering at hum length (instead of 30 s) makes MusicGen ~6x faster/cheaper per
+# track; the full-length song is built later by tiling these stems in the mixer.
+HUM_DURATION_SEC = 5
+GEN_DURATION_SEC = HUM_DURATION_SEC   # stem render length (matches the hum)
+MIX_DURATION_SEC = 30                 # final song length, built by looping stems
 
 _MELODIC_INSTRUMENTS = {"piano", "trumpet", "violin", "flute"}
 
@@ -97,6 +102,8 @@ def _audio_from_url_or_path(raw: str, tmp_path: Path) -> np.ndarray:
     sr, data = wavfile.read(raw)
     if data.dtype == np.int16:
         audio = data.astype(np.float32) / 32768.0
+    elif data.dtype == np.int32:
+        audio = data.astype(np.float32) / 2_147_483_648.0
     else:
         audio = data.astype(np.float32)
     if audio.ndim > 1:
@@ -258,7 +265,7 @@ def run_render_stems(
     else:
         print("\n  Warning: no melody hum found — each instrument uses its own hum")
 
-    print(f"\n--- Stem render ({GEN_DURATION_SEC}s per track via MusicGen) ---")
+    print(f"\n--- Stem render ({GEN_DURATION_SEC}s per track via MusicGen; looped to {MIX_DURATION_SEC}s at mix) ---")
     for track in comp.tracks:
         inst = track.instrument.lower()
         is_melodic = inst in _MELODIC_INSTRUMENTS

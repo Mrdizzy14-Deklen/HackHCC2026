@@ -48,6 +48,37 @@ def _detect_bpm(audio: np.ndarray) -> float:
         return 0.0
 
 
+def _tile_to_length(audio: np.ndarray, target_len: int, crossfade: int = 2048) -> np.ndarray:
+    """Loop a short stem to `target_len` samples with equal-power crossfades.
+
+    Used to build the full-length song from the short (~5 s) instrument stems.
+    Linear fades on each seam sum to unity in the overlap, avoiding loop clicks.
+    """
+    if len(audio) == 0:
+        return np.zeros(target_len, dtype=np.float32)
+    if len(audio) >= target_len:
+        return audio[:target_len].astype(np.float32, copy=True)
+
+    xf = int(min(crossfade, len(audio) // 4))
+    step = len(audio) - xf if xf else len(audio)
+    win_in  = np.linspace(0.0, 1.0, xf, dtype=np.float32) if xf else None
+    win_out = win_in[::-1] if xf else None
+
+    out = np.zeros(target_len, dtype=np.float32)
+    pos, first = 0, True
+    while pos < target_len:
+        seg = audio.astype(np.float32, copy=True)
+        if xf:
+            if not first:
+                seg[:xf] *= win_in     # fades up against previous tail
+            seg[-xf:] *= win_out       # fades down into next head
+        end = min(pos + len(seg), target_len)
+        out[pos:end] += seg[: end - pos]
+        first = False
+        pos += step
+    return out
+
+
 def _bpm_stretch(audio: np.ndarray, src_bpm: float, tgt_bpm: float) -> np.ndarray:
     """Time-stretch audio from src_bpm to tgt_bpm. No-op if BPMs are close."""
     if src_bpm <= 0 or tgt_bpm <= 0 or abs(src_bpm - tgt_bpm) < 2.0:
@@ -70,17 +101,21 @@ def mix_stems(
     pitch_shift_semitones: float = 0.0,
     tempo_multiplier: float = 1.0,
     target_bpm: int | None = None,
+    target_duration_sec: float | None = None,
 ) -> str:
     """
     Mix stems into one WAV, then apply pitch shift and tempo stretch.
 
-    stem_paths : [(track_id, abs_wav_path), ...]
-    volumes    : {track_id: 0.0–1.0}
-    output_path: where to write the final WAV
-    target_bpm : if set, each stem is time-stretched to this BPM before mixing
+    stem_paths          : [(track_id, abs_wav_path), ...]
+    volumes             : {track_id: 0.0–1.0}
+    output_path         : where to write the final WAV
+    target_bpm          : if set, each stem is time-stretched to this BPM first
+    target_duration_sec : if set, each stem is looped/trimmed to this length so a
+                          short (~5 s) stem fills the full song before summing
     """
     arrays: list[np.ndarray] = []
-    max_len = 0
+    target_len = int(target_duration_sec * TARGET_SR) if target_duration_sec else 0
+    max_len = target_len
 
     for tid, path in stem_paths:
         if not Path(path).is_file():
@@ -97,6 +132,10 @@ def mix_stems(
                 print(f"  [mixer] {tid}: {src_bpm:.0f} bpm -> {target_bpm} bpm (rate {target_bpm/src_bpm:.2f}x)")
             else:
                 print(f"  [mixer] {tid}: BPM detect failed, skipping normalisation")
+
+        # Loop the short stem up to the full song length
+        if target_len:
+            audio = _tile_to_length(audio, target_len)
 
         arrays.append(audio * vol)
         max_len = max(max_len, len(audio))
