@@ -298,6 +298,19 @@ function buildPlaybackNotes() {
   );
 }
 
+function _computeBpmFromNotes(notes) {
+  if (!notes || notes.length < 2) return 120;
+  const starts = notes.map(n => n.startMs ?? 0).sort((a, b) => a - b);
+  const gaps = [];
+  for (let i = 1; i < starts.length; i++) {
+    const g = starts[i] - starts[i - 1];
+    if (g > 100 && g < 2000) gaps.push(g);
+  }
+  if (!gaps.length) return 120;
+  gaps.sort((a, b) => a - b);
+  return Math.max(60, Math.min(200, Math.round(60000 / gaps[Math.floor(gaps.length / 2)])));
+}
+
 function midiToName(midi) {
   const N = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
   return midi != null ? N[midi % 12] + Math.floor(midi / 12 - 1) : "—";
@@ -499,8 +512,9 @@ function _startStemSource(trackId) {
 function _playAllStems() {
   if (_conductCtx.state === "suspended") _conductCtx.resume();
   const playbackNotes = buildPlaybackNotes();
+  const bpm = _computeBpmFromNotes(playbackNotes);
   window.dispatchEvent(new CustomEvent("notes:playback-start", {
-    detail: { notes: playbackNotes },
+    detail: { notes: playbackNotes, bpm },
   }));
   Object.keys(_conductNodes).forEach(_startStemSource);
   Object.keys(_conductNodes).forEach(tid =>
@@ -535,8 +549,9 @@ function _toggleConductPause() {
     if (btn) btn.textContent = "▶ Resume";
   } else {
     _conductCtx.resume();
+    const playbackNotes = buildPlaybackNotes();
     window.dispatchEvent(new CustomEvent("notes:playback-start", {
-      detail: { notes: buildPlaybackNotes() },
+      detail: { notes: playbackNotes, bpm: _computeBpmFromNotes(playbackNotes) },
     }));
     if (btn) btn.textContent = "⏸ Pause";
   }
@@ -861,7 +876,10 @@ async function _previewMaster() {
   _effectsMixing = true;
   $sub.textContent = "Mixing…";
 
-  if (_effectsSource) { try { _effectsSource.stop(); } catch (_) {} }
+  if (_effectsSource) {
+    try { _effectsSource.stop(); } catch (_) {}
+    window.dispatchEvent(new CustomEvent("song:final-stop"));
+  }
   _effectsSource = null;
 
   try {
@@ -886,6 +904,11 @@ async function _previewMaster() {
     src.connect(_effectsCtx.destination);
     src.start(0);
     _effectsSource = src;
+
+    const _allNotes = Object.values(trackNotes).flat();
+    window.dispatchEvent(new CustomEvent("song:final-start", {
+      detail: { bpm: _computeBpmFromNotes(_allNotes) },
+    }));
 
     $sub.textContent = "Rotate palm to adjust · ✋ re-preview · 👍👍 lyrics";
   } catch (err) {
@@ -931,6 +954,11 @@ async function _finalizeWithAI() {
     src.connect(_effectsCtx.destination);
     src.start(0);
     _effectsSource = src;
+
+    const _allNotes = Object.values(trackNotes).flat();
+    window.dispatchEvent(new CustomEvent("song:final-start", {
+      detail: { bpm: _computeBpmFromNotes(_allNotes) },
+    }));
 
     showToast("✓ Song polished!");
     _inPolishMode = false;
