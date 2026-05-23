@@ -305,7 +305,7 @@ function addOboe() {
 loader.load("/static/oboe/scene.gltf", (gltf) => {
   oboeCache.scene = gltf.scene;
   while (oboeCache.pending > 0 && oboeCache.count < OBOE_SLOTS.length) { oboeCache.pending--; addOboe(); }
-}, undefined, (err) => console.error("oboe load failed", err));
+}, undefined, () => { /* oboe model not included */ });
 
 
 // --- FRENCH HORNS (Tier 2 Left) ---
@@ -323,7 +323,7 @@ function addFrenchHorn() {
 loader.load("/static/french_horn/scene.gltf", (gltf) => {
   hornCache.scene = gltf.scene;
   while (hornCache.pending > 0 && hornCache.count < HORN_SLOTS.length) { hornCache.pending--; addFrenchHorn(); }
-}, undefined, (err) => console.error("french horn load failed", err));
+}, undefined, () => { /* french horn model not included */ });
 
 
 // --- TRUMPETS (Tier 2 Right) ---
@@ -362,7 +362,7 @@ function addTrombone() {
 loader.load("/static/trombone/scene.gltf", (gltf) => {
   tromboneCache.scene = gltf.scene;
   while (tromboneCache.pending > 0 && tromboneCache.count < TROMBONE_SLOTS.length) { tromboneCache.pending--; addTrombone(); }
-}, undefined, (err) => console.error("trombone load failed", err));
+}, undefined, () => { /* trombone model not included */ });
 
 // --- DRUMS (Tier 3 Far Edges) ---
 const DRUM_SLOTS = initSlotsWithLights([
