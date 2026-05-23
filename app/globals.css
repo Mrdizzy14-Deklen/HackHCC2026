@@ -5,9 +5,9 @@
   --navy-3: #15151E;
   --red: #B22020;
   --red-bright: #E03030;
-  --silver: #C0C8D0;
-  --silver-dim: #8A929B;
-  --silver-faint: #5A6068;
+  --silver: #C8D0D8;
+  --silver-dim: #A2AAB4;
+  --silver-faint: #828A95;
   --hairline: rgba(192, 200, 208, 0.10);
   --hairline-strong: rgba(192, 200, 208, 0.18);
 
@@ -204,10 +204,35 @@ a { color: inherit; text-decoration: none; }
   display: grid; place-items: center;
 }
 .piece-art::before {
-  content: ""; position: absolute; inset: 0;
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
   background:
-    radial-gradient(circle at 50% 50%, rgba(224, 48, 48, 0.12), transparent 55%),
-    repeating-linear-gradient(45deg, transparent 0 14px, rgba(192, 200, 208, 0.025) 14px 15px);
+    radial-gradient(circle at 50% 50%, rgba(224, 48, 48, 0.10), transparent 55%),
+    repeating-linear-gradient(45deg, transparent 0 14px, rgba(192, 200, 208, 0.02) 14px 15px);
+}
+/* album-cover sleeve art */
+.cover-img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  z-index: 0; display: block; transition: transform .6s cubic-bezier(.2,.8,.2,1), filter .4s;
+}
+.piece:hover .cover-img { transform: scale(1.04); }
+.piece-art.is-playing .cover-img { filter: brightness(0.92); }
+/* the record that slides out from behind the sleeve while playing */
+.now-vinyl {
+  position: absolute; right: -42%; top: 50%; width: 56%; aspect-ratio: 1; border-radius: 50%; z-index: 2;
+  background:
+    radial-gradient(circle at 50% 50%, var(--red) 0 9%, #0d0d0d 9.5% 11%, #15151c 11.5%),
+    repeating-radial-gradient(circle at 50% 50%, transparent 0 2px, rgba(192,200,208,0.05) 2px 3px),
+    #0a0a0a;
+  box-shadow: -10px 10px 26px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(192,200,208,0.08);
+  opacity: 0; transform: translateY(-50%) rotate(0deg);
+  transition: right .55s cubic-bezier(.2,.8,.2,1), opacity .4s;
+}
+.piece-art.is-playing .now-vinyl {
+  right: -22%; opacity: 1; animation: spin 3.2s linear infinite;
+}
+@keyframes spin {
+  from { transform: translateY(-50%) rotate(0deg); }
+  to   { transform: translateY(-50%) rotate(360deg); }
 }
 .piece .vinyl {
   width: 60%; aspect-ratio: 1; border-radius: 50%;
@@ -225,7 +250,7 @@ a { color: inherit; text-decoration: none; }
 .piece-badge {
   position: absolute; top: 14px; left: 14px; font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase;
   color: var(--silver); background: rgba(13, 13, 13, 0.7); padding: 5px 10px; border-radius: 2px;
-  border: 1px solid var(--hairline-strong); backdrop-filter: blur(6px); z-index: 2;
+  border: 1px solid var(--hairline-strong); backdrop-filter: blur(6px); z-index: 3;
 }
 .piece-badge.live { color: var(--red-bright); border-color: rgba(224, 48, 48, 0.35); }
 .piece-badge.live::before { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--red-bright); margin-right: 6px; vertical-align: middle; box-shadow: 0 0 8px var(--red-bright); animation: pulse 1.6s infinite; }
@@ -237,7 +262,16 @@ a { color: inherit; text-decoration: none; }
 .piece-meta { display: flex; justify-content: space-between; align-items: center; font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--silver-faint); margin-bottom: 10px; font-family: var(--f-mono); }
 .piece-title { font-family: var(--f-display); font-weight: 500; font-size: 24px; color: #EDEFF2; line-height: 1.1; margin-bottom: 4px; letter-spacing: 0.005em; }
 .piece-title em { font-style: italic; color: var(--silver); }
-.piece-composer { font-size: 12px; color: var(--silver-dim); letter-spacing: 0.04em; margin-bottom: 18px; font-style: italic; font-family: var(--f-display); }
+.piece-composer { font-size: 12px; color: var(--silver-dim); letter-spacing: 0.04em; margin-bottom: 14px; font-style: italic; font-family: var(--f-display); }
+.piece-social { display: flex; gap: 10px; margin-bottom: 14px; }
+.social-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--hairline-strong); color: var(--silver-dim);
+  font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.04em; transition: all .18s;
+}
+.social-btn:hover { border-color: var(--silver-dim); color: var(--silver); }
+.social-btn.active { color: var(--red-bright); border-color: var(--red); }
+.icon-btn.play.disabled, .icon-btn.play:disabled { background: var(--hairline-strong); border-color: var(--hairline-strong); color: var(--silver-dim); cursor: not-allowed; transform: none; }
 .piece-foot { display: flex; justify-content: space-between; align-items: center; padding-top: 16px; border-top: 1px solid var(--hairline); }
 .piece-foot .duration { font-family: var(--f-mono); font-size: 11px; color: var(--silver-dim); letter-spacing: 0.08em; display: flex; align-items: center; }
 .piece-actions { display: flex; gap: 8px; }
@@ -260,11 +294,18 @@ a { color: inherit; text-decoration: none; }
 }
 .fx-spot {
   position: absolute; left: -8%; width: 116%; top: -90px; height: calc(100% + 90px);
-  border: 0; z-index: 4; pointer-events: none; mix-blend-mode: screen; opacity: 1;
-  /* softer, wider feather = beams blend into the podium instead of a hard cut */
-  filter: blur(1px);
-  -webkit-mask-image: radial-gradient(ellipse 74% 120% at 50% -2%, #000 26%, rgba(0,0,0,0.6) 58%, transparent 88%);
-  mask-image: radial-gradient(ellipse 74% 120% at 50% -2%, #000 26%, rgba(0,0,0,0.6) 58%, transparent 88%);
+  border: 0; z-index: 4; pointer-events: none; mix-blend-mode: screen; opacity: 0.85;
+  /* The canvas is now transparent (glow only), so we just feather every edge —
+     including the TOP — so the spotlight melts into the page with no hard cap. */
+  filter: blur(1.5px);
+  -webkit-mask-image:
+    radial-gradient(ellipse 70% 115% at 50% 32%, #000 18%, rgba(0,0,0,0.45) 55%, transparent 82%),
+    linear-gradient(180deg, transparent 0%, #000 22%, #000 70%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    radial-gradient(ellipse 70% 115% at 50% 32%, #000 18%, rgba(0,0,0,0.45) 55%, transparent 82%),
+    linear-gradient(180deg, transparent 0%, #000 22%, #000 70%, transparent 100%);
+  mask-composite: intersect;
 }
 .podium-card {
   background: rgba(28, 28, 40, 0.5); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);

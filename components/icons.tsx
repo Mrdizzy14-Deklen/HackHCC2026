@@ -41,6 +41,12 @@ export const Ico = {
   flat: (s = 14): JSX.Element => (
     <svg width={s} height={s} viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="11" width="16" height="2" /></svg>
   ),
+  heart: (s = 14, filled = false): JSX.Element => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.6"><path d="M12 20s-7-4.6-9.2-9C1.4 8 2.8 5 5.8 5c1.9 0 3.2 1.2 4.2 2.6C11 6.2 12.3 5 14.2 5c3 0 4.4 3 3 6-2.2 4.4-9.2 9-9.2 9z" /></svg>
+  ),
+  bookmark: (s = 14, filled = false): JSX.Element => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.6"><path d="M6 4h12v16l-6-4-6 4z" /></svg>
+  ),
   google: (s = 18): JSX.Element => (
     <svg width={s} height={s} viewBox="0 0 24 24"><path fill="#EA4335" d="M12 10.2v3.9h5.5c-.24 1.4-1.7 4.1-5.5 4.1-3.3 0-6-2.7-6-6.1s2.7-6.1 6-6.1c1.9 0 3.1.8 3.9 1.5l2.6-2.5C17 .9 14.8 0 12 0 5.4 0 0 5.4 0 12s5.4 12 12 12c6.9 0 11.5-4.9 11.5-11.7 0-.8-.1-1.4-.2-2H12z" /></svg>
   ),

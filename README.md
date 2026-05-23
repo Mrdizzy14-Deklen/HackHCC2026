@@ -1,4 +1,4 @@
-# Music Daddy
+# Treble Trouble
 
 A digital concert hall for composers and conductors — a Next.js (App Router, TypeScript)
 web app with a login hero, a music **Library**, and a **Leaderboard**.

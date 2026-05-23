@@ -29,7 +29,7 @@ export default function TopBar() {
     <div className="topbar">
       <div className="brand">
         <div className="brand-mark" />
-        <div className="brand-name">MUSIC<em>·</em>DADDY</div>
+        <div className="brand-name">TREBLE<em>·</em>TROUBLE</div>
       </div>
       <div className="nav-tabs">
         <Link className={"nav-tab " + (pathname === "/library" ? "active" : "")} href="/library">Library</Link>

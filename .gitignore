@@ -235,3 +235,11 @@ next-env.d.ts
 
 # local env files (Google OAuth secrets etc.)
 .env*.local
+
+# Downloaded audio source files (uploaded into GridFS via scripts/load-media.mjs)
+/media/
+
+# The Python ".gitignore" above ignores any "lib/" dir — but our Next.js
+# data/db helpers live in lib/. Force-track the TypeScript ones.
+!/lib/
+!/lib/*.ts

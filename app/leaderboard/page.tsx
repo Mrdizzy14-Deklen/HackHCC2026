@@ -1,12 +1,33 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import TopBar from "@/components/TopBar";
 import PodiumCard from "@/components/PodiumCard";
 import FxFrame from "@/components/FxFrame";
 import { Ico } from "@/components/icons";
-import { LEADERS, RANKED } from "@/lib/data";
+import { LEADERS, RANKED, type Leader, type RankedConductor } from "@/lib/data";
 
 export default function LeaderboardPage() {
+  const [leaders, setLeaders] = useState<Leader[]>(LEADERS);
+  const [ranked, setRanked] = useState<RankedConductor[]>(RANKED);
+  const [count, setCount] = useState(4812);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/leaderboard")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive) return;
+        if (Array.isArray(d.leaders) && d.leaders.length) setLeaders(d.leaders);
+        if (Array.isArray(d.ranked)) setRanked(d.ranked);
+        if (typeof d.conductorCount === "number") setCount(d.conductorCount);
+      })
+      .catch(() => {/* keep mock */});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
     <div className="scene lb-scene fade-in" data-screen-label="Leaderboard">
       <TopBar />
@@ -17,7 +38,7 @@ export default function LeaderboardPage() {
           <h1 className="page-title">The <em>podium.</em></h1>
         </div>
         <div className="head-stats">
-          <div className="head-stat"><div className="n">4,812</div><div className="l">Conductors</div></div>
+          <div className="head-stat"><div className="n">{count.toLocaleString()}</div><div className="l">Conductors</div></div>
           <div className="head-stat"><div className="n">#37</div><div className="l">Your rank</div></div>
           <div className="head-stat"><div className="n">+128</div><div className="l">This week</div></div>
         </div>
@@ -32,16 +53,16 @@ export default function LeaderboardPage() {
               src="/laser-labyrinth.html"
               params={{ SWEEP_SPEED: 0.22, BEAM_INTENSITY: 1.2 }}
             />
-            <PodiumCard l={LEADERS[1]} kind="silver" />
-            <PodiumCard l={LEADERS[0]} kind="gold" />
-            <PodiumCard l={LEADERS[2]} kind="bronze" />
+            {leaders[1] && <PodiumCard l={leaders[1]} kind="silver" />}
+            {leaders[0] && <PodiumCard l={leaders[0]} kind="gold" />}
+            {leaders[2] && <PodiumCard l={leaders[2]} kind="bronze" />}
           </div>
 
           <div className="ranks">
             <div className="ranks-head">
               <div>Rank</div><div>Conductor</div><div>Works</div><div>Trend</div><div>Score</div><div>Δ</div>
             </div>
-            {RANKED.map((r) => (
+            {ranked.map((r) => (
               <div className="rank-row" key={r.rank}>
                 <div className="rank-num">{String(r.rank).padStart(2, "0")}</div>
                 <div className="rank-user">

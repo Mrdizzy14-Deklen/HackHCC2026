@@ -33,7 +33,7 @@ export default function LoginPage() {
       <div className="login-stack">
         <div className="login-brand">
           <div className="brand-mark" />
-          <div className="brand-name">MUSIC<em>·</em>DADDY</div>
+          <div className="brand-name">TREBLE<em>·</em>TROUBLE</div>
         </div>
 
         <div className="login-card">

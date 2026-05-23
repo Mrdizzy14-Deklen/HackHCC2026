@@ -4,7 +4,7 @@ import Providers from "@/components/Providers";
 import BackgroundFx from "@/components/BackgroundFx";
 
 export const metadata: Metadata = {
-  title: "Music Daddy — Conduct your orchestra",
+  title: "Treble Trouble — Conduct your orchestra",
   description: "A digital concert hall for composers, conductors and ensembles.",
 };
 
