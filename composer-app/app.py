@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import subprocess
 import sys
 import threading
+import urllib.request
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -34,6 +38,11 @@ STATIC_DIR = Path(__file__).parent / "static"
 RIGGED_HAND_DIR = Path(__file__).parent / "rigged_hand"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ACTIVE_SESSION_FILE = PROJECT_ROOT / ".active_session"
+EXPORTS_DIR = PROJECT_ROOT / "exports"
+
+# Treble Trouble web app (login / name / publish + MongoDB). Override with the
+# TREBLE_TROUBLE_URL env var when it runs somewhere other than localhost:3000.
+TREBLE_TROUBLE_URL = os.environ.get("TREBLE_TROUBLE_URL", "http://localhost:3000").rstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -321,3 +330,58 @@ async def conduct_start():
         if stem_path.is_file():
             stems.append({"track_id": t.id, "name": t.name or t.id, "url": f"/api/stems/{t.id}"})
     return {"status": "ready", "stems": stems, "session_id": sid}
+
+
+# --- Publish ----------------------------------------------------------------
+
+def _upload_mix_to_treble_trouble(wav_path: Path, session_id: str) -> str:
+    """POST the exported mix to Treble Trouble's GridFS upload; return audioId."""
+    data = wav_path.read_bytes()
+    boundary = uuid.uuid4().hex
+    body = b"".join([
+        f"--{boundary}\r\n".encode(),
+        f'Content-Disposition: form-data; name="file"; filename="{session_id}.wav"\r\n'.encode(),
+        b"Content-Type: audio/wav\r\n\r\n",
+        data,
+        f"\r\n--{boundary}--\r\n".encode(),
+    ])
+    req = urllib.request.Request(
+        f"{TREBLE_TROUBLE_URL}/api/audio/upload",
+        data=body,
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        return json.load(resp).get("audioId")
+
+
+@app.post("/api/publish")
+async def publish():
+    """Hand the finished song off to Treble Trouble to be named + published.
+
+    Uploads the exported mix (exports/<session>.wav) into the web app's GridFS,
+    then returns a /publish URL the browser should redirect to so the conductor
+    can log in, name the piece, and publish it to the leaderboard.
+    """
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+
+    wav = EXPORTS_DIR / f"{sid}.wav"
+    if not wav.is_file():
+        raise HTTPException(
+            400, "No exported song yet — finish conducting and press E to export first"
+        )
+
+    try:
+        audio_id = await asyncio.to_thread(_upload_mix_to_treble_trouble, wav, sid)
+    except Exception as exc:  # noqa: BLE001 — surface any transport/HTTP error to the UI
+        raise HTTPException(
+            502, f"Couldn't reach Treble Trouble at {TREBLE_TROUBLE_URL} ({exc})"
+        )
+
+    if not audio_id:
+        raise HTTPException(502, "Upload succeeded but no audioId was returned")
+
+    publish_url = f"{TREBLE_TROUBLE_URL}/publish?audioId={audio_id}&session={sid}"
+    return {"publish_url": publish_url, "audio_id": audio_id}
