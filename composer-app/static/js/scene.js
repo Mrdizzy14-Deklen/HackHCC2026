@@ -251,6 +251,12 @@ function placeInstrument(
 
 const loader = new GLTFLoader();
 
+function precompile(model) {
+  scene.add(model);
+  renderer.compile(scene, camera);
+  scene.remove(model);
+}
+
 // --- VIOLINS (Tier 0 & 1 Left) ---
 const VIOLIN_SLOTS = initSlotsWithLights([
   [-1.5, 0.6, 0.2], [-3.0, 0.6, 0.2], [-4.5, 0.6, 0.2], 
@@ -267,6 +273,7 @@ function addViolin() {
 // FIXED PATH HERE
 loader.load("/static/violon_high/scene.gltf", (gltf) => {
   violinCache.scene = gltf.scene;
+  precompile(gltf.scene.clone(true));
   while (violinCache.pending > 0 && violinCache.count < VIOLIN_SLOTS.length) { violinCache.pending--; addViolin(); }
 }, undefined, (err) => console.error("violon load failed", err));
 
@@ -285,6 +292,7 @@ function addFlute() {
 }
 loader.load("/static/basic_flute/scene.gltf", (gltf) => {
   fluteCache.scene = gltf.scene;
+  precompile(gltf.scene.clone(true));
   while (fluteCache.pending > 0 && fluteCache.count < FLUTE_SLOTS.length) { fluteCache.pending--; addFlute(); }
 }, undefined, (err) => console.error("flute load failed", err));
 
@@ -339,6 +347,7 @@ function addTrumpet() {
 }
 loader.load("/static/trumpet/scene.gltf", (gltf) => {
   trumpetCache.scene = gltf.scene;
+  precompile(gltf.scene.clone(true));
   while (trumpetCache.pending > 0 && trumpetCache.count < TRUMPET_SLOTS.length) { trumpetCache.pending--; addTrumpet(); }
 }, undefined, (err) => console.error("trumpet load failed", err));
 
@@ -376,6 +385,7 @@ function addDrum() {
 }
 loader.load("/static/timpani_drum/scene.gltf", (gltf) => {
   drumCache.scene = gltf.scene;
+  precompile(gltf.scene.clone(true));
   while (drumCache.pending > 0 && drumCache.count < DRUM_SLOTS.length) { drumCache.pending--; addDrum(); }
 }, undefined, (err) => console.error("drum load failed", err));
 
@@ -392,6 +402,7 @@ function addPiano() {
 }
 loader.load("/static/yamaha_m1a_piano/scene.gltf", (gltf) => {
   pianoCache.scene = gltf.scene;
+  precompile(gltf.scene.clone(true));
   if (pianoCache.pending) { pianoCache.pending = false; addPiano(); }
 }, undefined, (err) => console.error("piano load failed", err));
 
@@ -424,7 +435,7 @@ window.addEventListener("mousemove", (e) => {
     while (obj && !instruments.find((i) => i.outer === obj)) obj = obj.parent;
     hovered = instruments.find((i) => i.outer === obj) || null;
   }
-  const HOVER_SWING = THREE.MathUtils.degToRad(6);
+  const HOVER_SWING = THREE.MathUtils.degToRad(10);
   for (const inst of instruments) {
     inst.targetYaw = inst === hovered
       ? inst.baseYaw - Math.sign(inst.baseYaw || 1) * HOVER_SWING

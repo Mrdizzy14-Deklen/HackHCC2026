@@ -5,35 +5,52 @@ $("#panel-toggle").onclick = () => $("#panel").classList.toggle("collapsed");
 
 // --- NEW: Dynamically build the tabs to perfectly match our 3D scene ---
 const availableInstruments = [
-  "Violin", "Flute", "Oboe", "French Horn", 
-  "Trumpet", "Trombone", "Drum", "Piano"
+  "Violin", "Flute", "Trumpet", "Drum", "Piano"
 ];
 
 const addBtn = $("#add-instrument");
 const tabsContainer = addBtn.parentElement;
 
-// 1. Remove any hardcoded HTML tabs you don't actually have (except the add button)
-$$(".tab:not(.add)").forEach(t => t.remove());
-
-// 2. Generate the correct tabs
-availableInstruments.forEach((name, i) => {
+function makeTab(name, active) {
   const t = document.createElement("div");
-  t.className = "tab" + (i === 0 ? " active" : "");
+  t.className = "tab" + (active ? " active" : "");
   t.textContent = name;
-  
   t.onclick = () => {
     $$(".tab:not(.add)").forEach((x) => x.classList.remove("active"));
     t.classList.add("active");
   };
-  
-  // Insert them into the DOM right before the '+' button
   tabsContainer.insertBefore(t, addBtn);
-});
+  return t;
+}
 
-$("#add-instrument").onclick = () => {
+$$(".tab:not(.add)").forEach(t => t.remove());
+availableInstruments.forEach((name, i) => makeTab(name, i === 0));
+
+addBtn.onclick = () => {
   const active = document.querySelector(".tab.active");
   const kind = active ? active.textContent.trim() : "Trumpet";
   window.dispatchEvent(new CustomEvent("instrument:add", { detail: { kind } }));
+};
+
+const removeBtn = document.createElement("button");
+removeBtn.className = "tab add";
+removeBtn.id = "remove-instrument";
+removeBtn.setAttribute("aria-label", "Remove instrument");
+removeBtn.setAttribute("title", "Remove instrument");
+removeBtn.textContent = "−";
+tabsContainer.insertBefore(removeBtn, addBtn);
+
+removeBtn.onclick = () => {
+  const active = document.querySelector(".tab:not(.add).active");
+  if (!active) return;
+  const tabs = [...$$(".tab:not(.add)")];
+  if (tabs.length <= 1) return;
+  const idx = tabs.indexOf(active);
+  active.remove();
+  const remaining = [...$$(".tab:not(.add)")];
+  const next = remaining[Math.min(idx, remaining.length - 1)];
+  if (next) next.classList.add("active");
+  window.dispatchEvent(new CustomEvent("instrument:remove", { detail: { kind: active.textContent.trim() } }));
 };
 
 const rec = $("#rec"), sub = $("#sub"), note = $("#note"), cents = $("#cents");
