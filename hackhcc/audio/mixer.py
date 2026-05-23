@@ -1,7 +1,12 @@
-"""Offline stem mixer: sum N stems with volume weights → single WAV.
+"""Offline stem mixer: BPM-normalise N stems, sum with volume weights → single WAV.
 
-Optionally applies pitch shift and tempo stretch (via librosa) for the
-final export step.
+BPM normalisation
+-----------------
+Each stem is time-stretched to the session's target BPM before mixing.
+This is the primary fix for the "off-beat" problem — MusicGen calls are
+independent so each stem may land on a slightly different tempo.
+
+Optionally applies global pitch shift and tempo stretch for the final export.
 """
 
 from __future__ import annotations
@@ -31,6 +36,32 @@ def _load_mono(path: str) -> np.ndarray:
     return audio
 
 
+def _detect_bpm(audio: np.ndarray) -> float:
+    """Estimate BPM of an audio array. Returns 0.0 on failure."""
+    try:
+        import librosa
+        tempo, _ = librosa.beat.beat_track(y=audio, sr=TARGET_SR)
+        # librosa >= 0.10 returns ndarray
+        bpm = float(np.asarray(tempo).flat[0])
+        return bpm if 40 < bpm < 240 else 0.0
+    except Exception:
+        return 0.0
+
+
+def _bpm_stretch(audio: np.ndarray, src_bpm: float, tgt_bpm: float) -> np.ndarray:
+    """Time-stretch audio from src_bpm to tgt_bpm. No-op if BPMs are close."""
+    if src_bpm <= 0 or tgt_bpm <= 0 or abs(src_bpm - tgt_bpm) < 2.0:
+        return audio
+    rate = tgt_bpm / src_bpm
+    # Cap stretch to ±40 % to avoid artefacts on wildly wrong detections
+    rate = max(0.6, min(1.4, rate))
+    try:
+        import librosa
+        return librosa.effects.time_stretch(audio, rate=rate).astype(np.float32)
+    except Exception:
+        return audio
+
+
 def mix_stems(
     stem_paths: list[tuple[str, str]],
     volumes: dict[str, float],
@@ -38,6 +69,7 @@ def mix_stems(
     *,
     pitch_shift_semitones: float = 0.0,
     tempo_multiplier: float = 1.0,
+    target_bpm: int | None = None,
 ) -> str:
     """
     Mix stems into one WAV, then apply pitch shift and tempo stretch.
@@ -45,6 +77,7 @@ def mix_stems(
     stem_paths : [(track_id, abs_wav_path), ...]
     volumes    : {track_id: 0.0–1.0}
     output_path: where to write the final WAV
+    target_bpm : if set, each stem is time-stretched to this BPM before mixing
     """
     arrays: list[np.ndarray] = []
     max_len = 0
@@ -55,6 +88,16 @@ def mix_stems(
             continue
         audio = _load_mono(path)
         vol = max(0.0, min(1.0, volumes.get(tid, 1.0)))
+
+        # BPM normalisation — align each stem to the session tempo
+        if target_bpm and target_bpm > 0:
+            src_bpm = _detect_bpm(audio)
+            if src_bpm > 0:
+                audio = _bpm_stretch(audio, src_bpm, float(target_bpm))
+                print(f"  [mixer] {tid}: {src_bpm:.0f} bpm -> {target_bpm} bpm (rate {target_bpm/src_bpm:.2f}x)")
+            else:
+                print(f"  [mixer] {tid}: BPM detect failed, skipping normalisation")
+
         arrays.append(audio * vol)
         max_len = max(max_len, len(audio))
 

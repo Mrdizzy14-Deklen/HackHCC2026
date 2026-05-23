@@ -126,8 +126,14 @@ class ConductStemPlayback:
 
     def stop(self) -> None:
         if self._stream:
-            self._stream.stop()
-            self._stream.close()
+            try:
+                self._stream.abort()   # immediate stop — no callback flush
+            except Exception:
+                pass
+            try:
+                self._stream.close()
+            except Exception:
+                pass
             self._stream = None
         self._running = False
 
@@ -229,8 +235,14 @@ class ConductHumPlayback:
 
     def stop(self) -> None:
         if self._stream:
-            self._stream.stop()
-            self._stream.close()
+            try:
+                self._stream.abort()
+            except Exception:
+                pass
+            try:
+                self._stream.close()
+            except Exception:
+                pass
             self._stream = None
         self._running = False
 
