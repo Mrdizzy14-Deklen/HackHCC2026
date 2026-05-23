@@ -3,11 +3,31 @@ const $$ = (s) => document.querySelectorAll(s);
 
 $("#panel-toggle").onclick = () => $("#panel").classList.toggle("collapsed");
 
-$$(".tab:not(.add)").forEach((t) => {
+// --- NEW: Dynamically build the tabs to perfectly match our 3D scene ---
+const availableInstruments = [
+  "Violin", "Flute", "Oboe", "French Horn", 
+  "Trumpet", "Trombone", "Drum", "Piano"
+];
+
+const addBtn = $("#add-instrument");
+const tabsContainer = addBtn.parentElement;
+
+// 1. Remove any hardcoded HTML tabs you don't actually have (except the add button)
+$$(".tab:not(.add)").forEach(t => t.remove());
+
+// 2. Generate the correct tabs
+availableInstruments.forEach((name, i) => {
+  const t = document.createElement("div");
+  t.className = "tab" + (i === 0 ? " active" : "");
+  t.textContent = name;
+  
   t.onclick = () => {
     $$(".tab:not(.add)").forEach((x) => x.classList.remove("active"));
     t.classList.add("active");
   };
+  
+  // Insert them into the DOM right before the '+' button
+  tabsContainer.insertBefore(t, addBtn);
 });
 
 $("#add-instrument").onclick = () => {

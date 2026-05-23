@@ -50,6 +50,12 @@ const TROMBONE_ROT = new THREE.Euler(
   THREE.MathUtils.degToRad(0)
 );
 
+const DRUM_ROT = new THREE.Euler(
+  THREE.MathUtils.degToRad(0),
+  THREE.MathUtils.degToRad(0),
+  THREE.MathUtils.degToRad(0)
+);
+
 camera.position.set(0, 3.5, 10);
 camera.lookAt(0, 0.55, -2);
 
@@ -171,18 +177,16 @@ function buildOrchestraRisers() {
 
 buildOrchestraRisers();
 
-// --- NEW: Pre-spawn logic for performance ---
+// --- Pre-spawn logic for performance ---
 function createInstrumentSpotlight(x, y, z) {
   const instrumentY = getTierY(z) + (PLATFORM_THICKNESS / 2) + y;
   const light = new THREE.SpotLight(0xffffff, 0); // Intensity 0 (Off by default)
   light.position.set(x, instrumentY + 4, z + 1);
-  light.angle = Math.PI / 8; // Slightly wider to ensure coverage
+  light.angle = Math.PI / 8;
   light.penumbra = 0.5;
   light.decay = 2;
   light.distance = 15;
   
-  // CRITICAL PERFORMANCE FIX: Individual spots don't cast shadows, 
-  // preventing extreme lag while keeping the spotlight visual effect.
   light.castShadow = false; 
 
   const target = new THREE.Object3D();
@@ -194,7 +198,6 @@ function createInstrumentSpotlight(x, y, z) {
   return light;
 }
 
-// Helper to pre-spawn lights for an array of coordinates
 function initSlotsWithLights(coords) {
   return coords.map(pos => ({
     pos: pos,
@@ -237,7 +240,6 @@ function placeInstrument(
   
   scene.add(outer);
 
-  // Turn on the pre-spawned light and make it STRONGER
   if (spotLight) {
     spotLight.target = outer;
     spotLight.intensity = 200; // Super bright
@@ -259,10 +261,10 @@ function addViolin() {
   if (violinCache.count + violinCache.pending >= VIOLIN_SLOTS.length) return;
   if (!violinCache.scene) { violinCache.pending++; return; }
   const slot = VIOLIN_SLOTS[violinCache.count];
-  // Note: we pass 1.2 for sizeTarget, then slot.light
   placeInstrument(violinCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 30, VIOLIN_ROT, 1.2, slot.light);
   violinCache.count++;
 }
+// FIXED PATH HERE
 loader.load("/static/violin/scene.gltf", (gltf) => {
   violinCache.scene = gltf.scene;
   while (violinCache.pending > 0 && violinCache.count < VIOLIN_SLOTS.length) { violinCache.pending--; addViolin(); }
@@ -360,10 +362,26 @@ loader.load("/static/trombone/scene.gltf", (gltf) => {
   while (tromboneCache.pending > 0 && tromboneCache.count < TROMBONE_SLOTS.length) { tromboneCache.pending--; addTrombone(); }
 }, undefined, (err) => console.error("trombone load failed", err));
 
+// --- DRUMS (Tier 3 Far Edges) ---
+const DRUM_SLOTS = initSlotsWithLights([
+  [-5.0, 0.4, -5.0], [5.0, 0.4, -5.0]
+]);
+const drumCache = { scene: null, count: 0, pending: 0 };
+function addDrum() {
+  if (drumCache.count + drumCache.pending >= DRUM_SLOTS.length) return;
+  if (!drumCache.scene) { drumCache.pending++; return; }
+  const slot = DRUM_SLOTS[drumCache.count];
+  placeInstrument(drumCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 0, DRUM_ROT, 1.5, slot.light);
+  drumCache.count++;
+}
+loader.load("/static/drum/scene.gltf", (gltf) => {
+  drumCache.scene = gltf.scene;
+  while (drumCache.pending > 0 && drumCache.count < DRUM_SLOTS.length) { drumCache.pending--; addDrum(); }
+}, undefined, (err) => console.error("drum load failed", err));
 
 // --- PIANO (Tier 3 Center) ---
 const PIANO_ROT = new THREE.Euler(0, 0, 0);
-const pianoLight = createInstrumentSpotlight(0, 0.8, -4.5); // Pre-spawn piano light
+const pianoLight = createInstrumentSpotlight(0, 0.8, -4.5); 
 const pianoCache = { scene: null, placed: false, pending: false };
 
 function addPiano() {
@@ -388,6 +406,7 @@ window.addEventListener("instrument:add", (e) => {
   else if (kind === "obo soprano" || kind === "oboe") addOboe();
   else if (kind === "french horn" || kind === "french_horn") addFrenchHorn();
   else if (kind === "trombone") addTrombone();
+  else if (kind === "drum") addDrum();
 });
 
 const raycaster = new THREE.Raycaster();
@@ -429,6 +448,4 @@ function animate() {
 }
 animate();
 
-fetch("/api/ping")
-  .then((r) => r.json())
-  .catch((err) => console.error("ping failed", err));
+fetch("/api/ping").catch((err) => console.error("ping failed", err));
