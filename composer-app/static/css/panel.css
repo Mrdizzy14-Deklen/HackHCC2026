@@ -1,7 +1,8 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { background: #111111; }
 body { font-family: 'Inter', sans-serif; color: #f5f3ee; overflow: hidden; background: #111111; }
-canvas { display: block; width: 100vw; height: 100vh; }
+/* Three.js canvas (appended by scene.js) */
+canvas:not(#gesture-cursor) { display: block; width: 100vw; height: 100vh; }
 
 /* ─── Theatrical Curtains ─── */
 .curtain {
@@ -11,22 +12,74 @@ canvas { display: block; width: 100vw; height: 100vh; }
   width: auto;
   z-index: 5;
   pointer-events: none;
-  animation-duration: 5s;
+  /* No auto-play — animation fires only when .open class is added by gesture */
+  animation-duration: 4s;
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  animation-fill-mode: both;
+  animation-fill-mode: forwards;
+  animation-play-state: paused;
 }
-.curtain.left  { left: 0;  animation-name: curtain-open-left; }
-.curtain.right { right: 0; animation-name: curtain-open-right; }
-/* 0–40% = 2s hold at edge, 40–100% = 3s smooth slide off-screen */
+.curtain.left  { left: 0;  animation-name: curtain-open-left;  transform: translateX(0); }
+.curtain.right { right: 0; animation-name: curtain-open-right; transform: scaleX(-1); }
+/* Gesture triggers this class */
+.curtain.open  { animation-play-state: running; }
+
 @keyframes curtain-open-left {
-  0%, 40% { transform: translateX(0); }
-  100%     { transform: translateX(-120vw); }
+  0%   { transform: translateX(0); }
+  30%  { transform: translateX(0); }
+  100% { transform: translateX(-120vw); }
 }
 @keyframes curtain-open-right {
-  0%, 40% { transform: scaleX(-1); }
-  100%     { transform: translateX(120vw) scaleX(-1); }
+  0%   { transform: scaleX(-1) translateX(0); }
+  30%  { transform: scaleX(-1) translateX(0); }
+  100% { transform: scaleX(-1) translateX(-120vw); }
 }
 /* ─── End Curtains ─── */
+
+/* ─── Gesture hint overlay ─── */
+#gesture-hint {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  pointer-events: none;
+  transition: opacity 1s ease;
+}
+#gesture-hint .hint-icon {
+  font-size: 52px;
+  animation: hint-pulse 2s ease-in-out infinite;
+}
+#gesture-hint p {
+  font: 500 15px/1.5 'Fraunces', serif;
+  color: rgba(255,255,255,0.75);
+  letter-spacing: 0.03em;
+}
+@keyframes hint-pulse {
+  0%, 100% { transform: scale(1);    opacity: 0.8; }
+  50%       { transform: scale(1.12); opacity: 1;   }
+}
+#gesture-hint { cursor: pointer; }
+#gesture-hint .hint-skip {
+  font-size: 11px !important;
+  color: rgba(255,255,255,0.35) !important;
+  margin-top: 4px;
+}
+#gesture-hint.hidden { opacity: 0; pointer-events: none; }
+/* ─── End Gesture Hint ─── */
+
+/* ─── Tab done state ─── */
+.tab.done {
+  border-color: rgba(100, 220, 130, 0.35);
+  color: rgba(100, 220, 130, 0.9);
+}
+.tab.done.active {
+  background: rgba(100, 220, 130, 0.2);
+  color: rgba(100, 220, 130, 1);
+  border-color: rgba(100, 220, 130, 0.5);
+}
 
 .panel {
   position: fixed; top: 24px; right: 24px; bottom: 24px; width: 340px; z-index: 7;
@@ -127,3 +180,58 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .btn:hover { background: rgba(255, 255, 255, 0.08); }
 .btn.primary { background: rgba(255, 255, 255, 0.95); color: #1a1814; border-color: transparent; }
 .btn.primary:hover { background: #fff; }
+
+/* ─── Hand cursor overlay ─── */
+#gesture-cursor {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+  width: 100vw;
+  height: 100vh;
+}
+/* ─── End Hand Cursor ─── */
+
+/* ─── Camera preview (top-left corner) ─── */
+#cam-preview {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  z-index: 10;
+  width: 160px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  background: #000;
+}
+#gesture-cam-preview {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  display: block;
+  transform: scaleX(-1);  /* mirror so it feels like a selfie camera */
+}
+#gesture-badge {
+  padding: 5px 10px;
+  font: 500 11px/1 'Inter', sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.6);
+  background: rgba(0,0,0,0.6);
+  text-align: center;
+  min-height: 22px;
+}
+#gesture-badge.active  { color: #7effa0; }
+#gesture-badge.warning { color: #ffd97d; }
+
+#voice-prompt {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #fff;
+  background: rgba(232, 93, 74, 0.85);
+  text-align: center;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+#voice-prompt.hidden { display: none; }
+/* ─── End Camera Preview ─── */

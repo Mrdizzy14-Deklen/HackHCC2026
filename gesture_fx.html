@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Gesture FX — two-hand sound instrument</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #0a0a0c; color: #e6e6ea;
+    font: 14px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  video { display: none; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  .label { position: absolute; top: 18px; padding: 10px 14px; border-radius: 10px;
+    background: rgba(12,12,16,.62); backdrop-filter: blur(6px); letter-spacing: .04em; }
+  #leftLabel  { left: 18px;  border-left: 3px solid #b06bff; }
+  #rightLabel { right: 18px; border-right: 3px solid #46e08a; text-align: right; }
+  .label .shape { font-size: 18px; font-weight: 600; }
+  .label .hint  { font-size: 11px; opacity: .55; margin-top: 4px; }
+  #leftLabel .shape  { color: #cfa6ff; }
+  #rightLabel .shape { color: #8df0bb; }
+
+  #params { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+    display: flex; gap: 18px; padding: 10px 16px; border-radius: 12px;
+    background: rgba(12,12,16,.6); backdrop-filter: blur(6px); font-size: 11px;
+    max-width: 92vw; flex-wrap: wrap; justify-content: center; }
+  #params div { min-width: 78px; }
+  #params b { display: block; font-size: 10px; opacity: .5; font-weight: 500;
+    text-transform: uppercase; letter-spacing: .06em; }
+  #params span { font-variant-numeric: tabular-nums; }
+
+  #flash { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    font-size: 26px; font-weight: 700; letter-spacing: .08em; opacity: 0;
+    transition: opacity .18s; pointer-events: none; text-shadow: 0 0 24px currentColor; }
+
+  #start { position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px; background: #0a0a0c;
+    z-index: 10; text-align: center; }
+  #start h1 { font-size: 22px; font-weight: 700; letter-spacing: .02em; }
+  #start p  { max-width: 520px; opacity: .6; line-height: 1.6; }
+  #start button { padding: 12px 28px; font: inherit; font-size: 15px; cursor: pointer;
+    color: #0a0a0c; background: #e6e6ea; border: 0; border-radius: 10px; }
+  #start button:hover { background: #fff; }
+  #status { position: absolute; left: 18px; bottom: 14px; font-size: 11px; opacity: .4; }
+  .cols { display: flex; gap: 36px; text-align: left; margin-top: 6px; }
+  .cols h3 { font-size: 12px; margin-bottom: 6px; }
+  .cols ul { list-style: none; font-size: 11px; opacity: .65; line-height: 1.7; }
+  .pp { color: #cfa6ff; } .gg { color: #8df0bb; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="video" playsinline></video>
+  <canvas id="canvas"></canvas>
+
+  <div id="leftLabel" class="label">
+    <div class="shape" id="leftShape">—</div>
+    <div class="hint" id="leftHint">left hand · the sound</div>
+  </div>
+  <div id="rightLabel" class="label">
+    <div class="shape" id="rightShape">—</div>
+    <div class="hint" id="rightHint">right hand · the space</div>
+  </div>
+
+  <div id="params"></div>
+  <div id="flash"></div>
+  <div id="status">initialising…</div>
+</div>
+
+<div id="start">
+  <h1>Gesture FX</h1>
+  <p>Two hands, two jobs. <b class="pp">Left hand</b> shapes the raw sound — pitch, distortion, filter, noise, vibrato.
+     <b class="gg">Right hand</b> shapes the space — reverb, delay, volume. Each hand only needs three shapes.</p>
+  <div class="cols">
+    <div><h3 class="pp">LEFT · sound</h3><ul>
+      <li>✊ Fist — height: pitch · rotate: distortion</li>
+      <li>🖐 Open — height: filter · L/R: noise</li>
+      <li>✌ Peace — height: vibrato depth · rotate: speed</li>
+    </ul></div>
+    <div><h3 class="gg">RIGHT · space</h3><ul>
+      <li>✊ Fist — height: reverb size · rotate: wet/dry</li>
+      <li>🖐 Open — height: volume · L/R: delay feedback</li>
+      <li>☝ Point — angle: delay time · height: delay level</li>
+    </ul></div>
+  </div>
+  <p style="font-size:12px;opacity:.5">Both fists = reset · Both palms raised high = swell</p>
+  <button id="startBtn">Start camera + audio</button>
+</div>
+
+<!-- MediaPipe UMD bundles expose globals: Hands, HAND_CONNECTIONS, Camera, drawConnectors, drawLandmarks -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script>
+// ─── elements ──────────────────────────────────────────────────────────────
+const video  = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx    = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+const flashEl  = document.getElementById("flash");
+const els = {
+  leftShape: document.getElementById("leftShape"),
+  rightShape: document.getElementById("rightShape"),
+};
+
+const PURPLE = "#b06bff", GREEN = "#46e08a";
+
+// ─── audio engine ────────────────────────────────────────────────────────────
+let actx = null;
+const A = {};               // node registry
+const SMOOTH = 0.08;        // time constant for param crossfades (seconds)
+
+// default ("clean") values — also the reset target
+const DEFAULTS = {
+  pitch: 220, distortion: 0, cutoff: 8000, noise: 0,
+  vibDepth: 0, vibSpeed: 5,
+  reverbSize: 1.2, reverbWet: 0.15, volume: 0.6,
+  delayFeedback: 0.2, delayTime: 0.25, delayLevel: 0.1,
+};
+const P = { ...DEFAULTS };   // live targets
+
+function set(param, value, when = actx.currentTime) {
+  param.setTargetAtTime(value, when, SMOOTH);
+}
+
+function makeNoiseBuffer() {
+  const len = actx.sampleRate * 2;
+  const buf = actx.createBuffer(1, len, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  return buf;
+}
+
+function makeImpulse(seconds, decay = 2.2) {
+  const len = Math.max(1, Math.floor(actx.sampleRate * seconds));
+  const buf = actx.createBuffer(2, len, actx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < len; i++)
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+  }
+  return buf;
+}
+
+function makeDistortionCurve(amount) {
+  // amount 0..1 → soft to hard drive
+  const k = amount * 100;
+  const n = 1024, curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = (1 + k) * x / (1 + k * Math.abs(x));
+  }
+  return curve;
+}
+
+function buildAudio() {
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+
+  // — left hand: the sound —
+  A.osc = actx.createOscillator(); A.osc.type = "sawtooth";
+  A.osc.frequency.value = P.pitch;
+
+  A.vibLFO = actx.createOscillator(); A.vibLFO.type = "sine";
+  A.vibLFO.frequency.value = P.vibSpeed;
+  A.vibGain = actx.createGain(); A.vibGain.gain.value = P.vibDepth; // cents
+  A.vibLFO.connect(A.vibGain).connect(A.osc.detune);
+
+  A.shaper = actx.createWaveShaper();
+  A.shaper.curve = makeDistortionCurve(P.distortion);
+
+  A.noise = actx.createBufferSource(); A.noise.buffer = makeNoiseBuffer(); A.noise.loop = true;
+  A.noiseGain = actx.createGain(); A.noiseGain.gain.value = P.noise;
+
+  A.filter = actx.createBiquadFilter(); A.filter.type = "lowpass";
+  A.filter.frequency.value = P.cutoff; A.filter.Q.value = 0.9;
+
+  A.osc.connect(A.shaper).connect(A.filter);
+  A.noise.connect(A.noiseGain).connect(A.filter);
+
+  A.tone = actx.createGain(); A.tone.gain.value = 0.5;  // pre-space level
+  A.filter.connect(A.tone);
+
+  // — right hand: the space —
+  A.master = actx.createGain(); A.master.gain.value = P.volume;
+
+  // dry
+  A.tone.connect(A.master);
+
+  // delay (feedback loop + wet level)
+  A.delay = actx.createDelay(2.0); A.delay.delayTime.value = P.delayTime;
+  A.delayFb = actx.createGain(); A.delayFb.gain.value = P.delayFeedback;
+  A.delayWet = actx.createGain(); A.delayWet.gain.value = P.delayLevel;
+  A.tone.connect(A.delay);
+  A.delay.connect(A.delayFb).connect(A.delay);
+  A.delay.connect(A.delayWet).connect(A.master);
+
+  // reverb (convolver + wet level; size = impulse length)
+  A.reverb = actx.createConvolver(); A.reverb.buffer = makeImpulse(P.reverbSize);
+  A.reverbWet = actx.createGain(); A.reverbWet.gain.value = P.reverbWet;
+  A.tone.connect(A.reverb).connect(A.reverbWet).connect(A.master);
+
+  A.master.connect(actx.destination);
+
+  A.osc.start(); A.vibLFO.start(); A.noise.start();
+  A._lastReverbSize = P.reverbSize;
+  A._lastReverbAt = 0;
+  A._lastDist = P.distortion;
+}
+
+// push current target object P onto the audio params (called every frame)
+function applyParams() {
+  if (!actx) return;
+  set(A.osc.frequency, P.pitch);
+  set(A.filter.frequency, P.cutoff);
+  set(A.noiseGain.gain, P.noise);
+  set(A.vibGain.gain, P.vibDepth);
+  set(A.vibLFO.frequency, P.vibSpeed);
+  set(A.delayFb.gain, Math.min(P.delayFeedback, 0.92));
+  set(A.delay.delayTime, P.delayTime);
+  set(A.delayWet.gain, P.delayLevel);
+  set(A.reverbWet.gain, P.reverbWet);
+  set(A.master.gain, P.volume);
+
+  // distortion curve + reverb impulse can't ramp — throttle regeneration
+  if (Math.abs(P.distortion - A._lastDist) > 0.04) {
+    A.shaper.curve = makeDistortionCurve(P.distortion);
+    A._lastDist = P.distortion;
+  }
+  const now = actx.currentTime;
+  if (Math.abs(P.reverbSize - A._lastReverbSize) > 0.15 && now - A._lastReverbAt > 0.25) {
+    A.reverb.buffer = makeImpulse(P.reverbSize);
+    A._lastReverbSize = P.reverbSize; A._lastReverbAt = now;
+  }
+}
+
+// ─── gesture maths ───────────────────────────────────────────────────────────
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const lerp = (a, b, t) => a + (b - a) * clamp01(t);
+
+// landmark x is flipped to mirror (selfie) space so screen-left = small mx
+const mx = lm => 1 - lm.x;
+
+function fingerExtended(lm, tip, pip) {
+  // extended when the tip is farther from the wrist than the pip joint
+  const w = lm[0];
+  const dt = Math.hypot(mx(lm[tip]) - mx(w), lm[tip].y - w.y);
+  const dp = Math.hypot(mx(lm[pip]) - mx(w), lm[pip].y - w.y);
+  return dt > dp * 1.05;
+}
+
+function classifyShape(lm) {
+  const idx = fingerExtended(lm, 8, 6);
+  const mid = fingerExtended(lm, 12, 10);
+  const rng = fingerExtended(lm, 16, 14);
+  const pky = fingerExtended(lm, 20, 18);
+  const n = idx + mid + rng + pky;
+  if (n === 0) return "fist";
+  if (idx && mid && !rng && !pky) return "peace";
+  if (idx && !mid && !rng && !pky) return "point";
+  if (n >= 3) return "open";
+  return "open"; // loose hands default to open palm
+}
+
+function features(lm) {
+  const w = lm[0], mcp = lm[9];
+  const height = clamp01(1 - w.y);          // up in frame → 1
+  const sideways = clamp01(mx(w));          // screen-left 0 → right 1
+  // hand tilt: wrist → middle-finger MCP, mapped 0..1
+  const ang = Math.atan2(-(mcp.y - w.y), mx(mcp) - mx(w)); // up ≈ +π/2
+  const rotation = clamp01((ang + Math.PI) / (2 * Math.PI));
+  // index pointing angle: vertical(up)=1, horizontal=0
+  const ix = lm[8], im = lm[5];
+  const fang = Math.atan2(-(ix.y - im.y), mx(ix) - mx(im));
+  const fingerUp = clamp01(Math.abs(fang) / (Math.PI / 2));
+  return { height, sideways, rotation, fingerUp };
+}
+
+// ─── per-hand parameter mapping ──────────────────────────────────────────────
+function applyLeft(shape, f) {
+  if (shape === "fist") {
+    P.pitch      = lerp(110, 880, f.height);
+    P.distortion = clamp01(1 - f.rotation);     // knuckles up = clean
+  } else if (shape === "open") {
+    P.cutoff = lerp(200, 12000, f.height);
+    P.noise  = lerp(0, 0.6, f.sideways);
+  } else if (shape === "peace") {
+    P.vibDepth = lerp(0, 120, f.height);        // cents
+    P.vibSpeed = lerp(1.5, 12, f.rotation);
+  }
+}
+
+function applyRight(shape, f) {
+  if (shape === "fist") {
+    P.reverbSize = lerp(0.4, 4.5, f.height);
+    P.reverbWet  = lerp(0, 0.9, f.rotation);
+  } else if (shape === "open") {
+    P.volume        = lerp(0, 1, f.height);
+    P.delayFeedback = lerp(0, 0.9, f.sideways);
+  } else if (shape === "point") {
+    P.delayTime  = lerp(0.06, 0.8, 1 - f.fingerUp); // up = short slap
+    P.delayLevel = lerp(0, 0.6, f.height);
+  }
+}
+
+function resetAll() {
+  Object.assign(P, DEFAULTS);
+  flash("RESET", "#cfa6ff");
+}
+function swell() {
+  P.volume = 1; P.reverbWet = Math.max(P.reverbWet, 0.5); P.cutoff = Math.max(P.cutoff, 9000);
+}
+
+let flashUntil = 0;
+function flash(text, color) {
+  flashEl.textContent = text; flashEl.style.color = color; flashEl.style.opacity = 1;
+  flashUntil = performance.now() + 700;
+}
+
+// ─── results loop ────────────────────────────────────────────────────────────
+const SHAPE_LABEL = { fist: "✊ FIST", open: "🖐 OPEN PALM", peace: "✌ PEACE", point: "☝ POINT", "—": "—" };
+let bothFistEdge = false;
+
+function onResults(res) {
+  canvas.width  = video.videoWidth  || 1280;
+  canvas.height = video.videoHeight || 720;
+  ctx.save();
+  // mirror the camera so it reads like a selfie
+  ctx.translate(canvas.width, 0); ctx.scale(-1, 1);
+  ctx.drawImage(res.image, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+  // dim for contrast
+  ctx.fillStyle = "rgba(8,8,11,.45)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const hands = [];
+  if (res.multiHandLandmarks) {
+    res.multiHandLandmarks.forEach(lm => hands.push({ lm, screenX: mx(lm[0]) }));
+  }
+  hands.sort((a, b) => a.screenX - b.screenX);     // leftmost first
+  const left  = hands[0] && hands[0].screenX < 0.62 ? hands[0] : null;
+  const right = hands.length > 1 ? hands[hands.length - 1]
+              : (hands[0] && hands[0].screenX >= 0.62 ? hands[0] : null);
+
+  let leftShape = "—", rightShape = "—";
+
+  if (left)  leftShape  = classifyShape(left.lm);
+  if (right) rightShape = classifyShape(right.lm);
+
+  // combined moments take priority over individual mapping this frame
+  const bothFist = leftShape === "fist" && rightShape === "fist";
+  const bothOpenHigh = leftShape === "open" && rightShape === "open"
+    && (1 - left.lm[0].y) > 0.78 && (1 - right.lm[0].y) > 0.78;
+
+  if (bothFist) {
+    if (!bothFistEdge) { resetAll(); bothFistEdge = true; }
+  } else {
+    bothFistEdge = false;
+    if (left)  applyLeft(leftShape,  features(left.lm));
+    if (right) applyRight(rightShape, features(right.lm));
+    if (bothOpenHigh) { swell(); flash("SWELL", "#8df0bb"); }
+  }
+
+  // draw skeletons (left purple, right green)
+  if (left)  drawHand(left.lm,  PURPLE);
+  if (right) drawHand(right.lm, GREEN);
+
+  // crossfade params onto audio
+  applyParams();
+
+  // ui
+  els.leftShape.textContent  = SHAPE_LABEL[leftShape];
+  els.rightShape.textContent = SHAPE_LABEL[rightShape];
+  if (performance.now() > flashUntil) flashEl.style.opacity = 0;
+  renderParams();
+}
+
+function drawHand(lm, color) {
+  // drawConnectors multiplies normalized coords by canvas size internally,
+  // so just mirror x and pass pixel line widths.
+  const pts = lm.map(p => ({ x: mx(p), y: p.y }));
+  drawConnectors(ctx, pts, HAND_CONNECTIONS, { color, lineWidth: 4 });
+  drawLandmarks(ctx, pts, { color: "#fff", fillColor: color, lineWidth: 1, radius: 4 });
+}
+
+// ─── params readout ──────────────────────────────────────────────────────────
+const READOUT = [
+  ["pitch", () => P.pitch.toFixed(0) + "hz"],
+  ["dist",  () => (P.distortion * 100).toFixed(0) + "%"],
+  ["filter",() => (P.cutoff / 1000).toFixed(1) + "k"],
+  ["noise", () => (P.noise * 100).toFixed(0) + "%"],
+  ["vib",   () => P.vibDepth.toFixed(0) + "/" + P.vibSpeed.toFixed(1) + "hz"],
+  ["reverb",() => P.reverbSize.toFixed(1) + "s " + (P.reverbWet * 100).toFixed(0) + "%"],
+  ["delay", () => P.delayTime.toFixed(2) + "s fb" + (P.delayFeedback * 100).toFixed(0)],
+  ["dlvl",  () => (P.delayLevel * 100).toFixed(0) + "%"],
+  ["vol",   () => (P.volume * 100).toFixed(0) + "%"],
+];
+const paramsEl = document.getElementById("params");
+paramsEl.innerHTML = READOUT.map(([k]) => `<div><b>${k}</b><span id="r_${k}">–</span></div>`).join("");
+function renderParams() {
+  for (const [k, fn] of READOUT) {
+    const el = document.getElementById("r_" + k);
+    if (el) el.textContent = fn();
+  }
+}
+
+// ─── boot ────────────────────────────────────────────────────────────────────
+document.getElementById("startBtn").addEventListener("click", async () => {
+  document.getElementById("start").style.display = "none";
+  try {
+    buildAudio();
+    if (actx.state === "suspended") await actx.resume();
+  } catch (e) { statusEl.textContent = "audio error: " + e.message; }
+
+  const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+  hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+  hands.onResults(onResults);
+
+  const camera = new Camera(video, {
+    onFrame: async () => { await hands.send({ image: video }); },
+    width: 1280, height: 720,
+  });
+  try {
+    await camera.start();
+    statusEl.textContent = "live · show a hand";
+  } catch (e) {
+    statusEl.textContent = "camera error: " + e.message + " (allow camera + use https/localhost)";
+  }
+});
+</script>
+</body>
+</html>

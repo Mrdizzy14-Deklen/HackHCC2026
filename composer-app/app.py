@@ -1,19 +1,68 @@
+from __future__ import annotations
+
+import asyncio
+import subprocess
+import sys
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+# Make hackhcc importable from parent dir
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from hackhcc.env import load_project_env
+load_project_env()
+
+from hackhcc.composition import (
+    Composition,
+    create_default_composition,
+    hums_dir,
+    load_composition,
+    save_composition,
+)
+from hackhcc.phases.setup.intent import apply_intent, default_five_tracks
+from hackhcc.phases.setup.pitch import run_pitch_detection
+from hackhcc.phases.setup.render import run_render_stems
 
 STATIC_DIR = Path(__file__).parent / "static"
 RIGGED_HAND_DIR = Path(__file__).parent / "rigged_hand"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ACTIVE_SESSION_FILE = PROJECT_ROOT / ".active_session"
+
+
+# ---------------------------------------------------------------------------
+# Shared mutable state (lives in app.state.ctx)
+# ---------------------------------------------------------------------------
+class _Ctx:
+    subprocesses: list[Any]
+    hum_busy: dict[str, bool]      # track_id -> currently recording
+    hum_done: dict[str, bool]      # track_id -> finished + pitch run
+    hum_error: dict[str, str | None]
+    render_busy: bool
+    render_done: bool
+    render_error: str | None
+
+    def __init__(self) -> None:
+        self.subprocesses = []
+        self.hum_busy = {}
+        self.hum_done = {}
+        self.hum_error = {}
+        self.render_busy = False
+        self.render_done = False
+        self.render_error = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.subprocesses = []
+    app.state.ctx = _Ctx()
     yield
-    for proc in app.state.subprocesses:
+    for proc in app.state.ctx.subprocesses:
         try:
             proc.terminate()
             proc.wait(timeout=5)
@@ -25,11 +74,47 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/rigged_hand", StaticFiles(directory=RIGGED_HAND_DIR), name="rigged_hand")
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _read_active_session() -> str | None:
+    return ACTIVE_SESSION_FILE.read_text().strip() if ACTIVE_SESSION_FILE.is_file() else None
+
+
+def _write_active_session(sid: str) -> None:
+    ACTIVE_SESSION_FILE.write_text(sid)
+
+
+def _comp_json(comp: Composition) -> dict:
+    return {
+        "session_id": comp.session_id,
+        "mood": comp.mood,
+        "bpm": comp.bpm,
+        "key": comp.key,
+        "phase": comp.phase,
+        "allow_conduct": comp.flags.get("allow_conduct", False),
+        "tracks": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "instrument": t.instrument,
+                "hum_done": bool(t.hum_path),
+                "stem_done": bool(t.stem_path),
+                "notes_count": len(t.notes),
+                "notes": [n.to_dict() for n in t.notes],
+            }
+            for t in comp.tracks
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 @app.get("/")
 async def index():
     return FileResponse(STATIC_DIR / "index.html")
@@ -38,3 +123,188 @@ async def index():
 @app.get("/api/ping")
 async def ping():
     return {"status": "ok"}
+
+
+# --- Session ----------------------------------------------------------------
+
+class SessionStartBody(BaseModel):
+    session_id: str = "session1"
+    mood: str = "upbeat"
+
+
+@app.post("/api/session/start")
+async def session_start(body: SessionStartBody):
+    def _init():
+        try:
+            comp = load_composition(body.session_id)
+        except FileNotFoundError:
+            comp = create_default_composition(body.session_id)
+        if not comp.tracks:
+            apply_intent(
+                body.session_id,
+                mood=body.mood,
+                tracks=default_five_tracks(),
+                source="web",
+            )
+        _write_active_session(body.session_id)
+        return load_composition(body.session_id)
+
+    comp = await asyncio.to_thread(_init)
+    return _comp_json(comp)
+
+
+@app.get("/api/session/state")
+async def session_state():
+    sid = _read_active_session()
+    if not sid:
+        return {"session_id": None, "tracks": [], "phase": "idle"}
+    try:
+        comp = await asyncio.to_thread(load_composition, sid)
+        return _comp_json(comp)
+    except FileNotFoundError:
+        return {"session_id": sid, "tracks": [], "phase": "idle"}
+
+
+# --- Hum recording ----------------------------------------------------------
+
+@app.post("/api/tracks/{track_id}/hum")
+async def start_hum(track_id: str, seconds: float = 5.0):
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session — call /api/session/start first")
+
+    ctx: _Ctx = app.state.ctx
+    if ctx.hum_busy.get(track_id):
+        raise HTTPException(409, f"Already recording {track_id}")
+
+    ctx.hum_busy[track_id] = True
+    ctx.hum_done[track_id] = False
+    ctx.hum_error[track_id] = None
+
+    def _record():
+        try:
+            import numpy as np
+            import sounddevice as sd
+            from scipy.io import wavfile
+
+            audio = sd.rec(
+                int(seconds * 22_050),
+                samplerate=22_050,
+                channels=1,
+                dtype="float32",
+            )
+            sd.wait()
+            audio = audio[:, 0]
+
+            folder = hums_dir(sid)
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"{track_id}.wav"
+            wavfile.write(path, 22_050, (np.clip(audio, -1.0, 1.0) * 32767).astype("int16"))
+
+            comp = load_composition(sid)
+            for t in comp.tracks:
+                if t.id == track_id:
+                    t.hum_path = f"hums/{track_id}.wav"
+                    break
+            save_composition(comp)
+
+            run_pitch_detection(sid)
+            ctx.hum_done[track_id] = True
+        except Exception as exc:
+            ctx.hum_error[track_id] = str(exc)
+        finally:
+            ctx.hum_busy[track_id] = False
+
+    threading.Thread(target=_record, daemon=True).start()
+    return {"status": "recording", "track_id": track_id, "seconds": seconds}
+
+
+@app.get("/api/tracks/{track_id}/hum/status")
+async def hum_status(track_id: str):
+    ctx: _Ctx = app.state.ctx
+    sid = _read_active_session()
+    notes: list = []
+    if sid and ctx.hum_done.get(track_id):
+        try:
+            comp = await asyncio.to_thread(load_composition, sid)
+            for t in comp.tracks:
+                if t.id == track_id:
+                    notes = [n.to_dict() for n in t.notes]
+                    break
+        except Exception:
+            pass
+    return {
+        "track_id": track_id,
+        "recording": ctx.hum_busy.get(track_id, False),
+        "done": ctx.hum_done.get(track_id, False),
+        "error": ctx.hum_error.get(track_id),
+        "notes": notes,
+    }
+
+
+# --- Stem render ------------------------------------------------------------
+
+@app.post("/api/render")
+async def start_render():
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+
+    ctx: _Ctx = app.state.ctx
+    if ctx.render_busy:
+        raise HTTPException(409, "Render already running")
+
+    ctx.render_busy = True
+    ctx.render_done = False
+    ctx.render_error = None
+
+    def _render():
+        try:
+            run_render_stems(sid)
+            # Unlock conduct — stems exist, session is ready to play
+            try:
+                comp = load_composition(sid)
+                comp.flags["stems_complete"] = True
+                comp.flags["setup_complete"] = True
+                comp.flags["allow_conduct"] = True
+                from hackhcc.composition import Phase
+                comp.phase = Phase.CONDUCT.value
+                save_composition(comp)
+            except Exception:
+                pass
+            ctx.render_done = True
+        except Exception as exc:
+            ctx.render_error = str(exc)
+        finally:
+            ctx.render_busy = False
+
+    threading.Thread(target=_render, daemon=True).start()
+    return {"status": "rendering", "session_id": sid}
+
+
+@app.get("/api/render/status")
+async def render_status():
+    ctx: _Ctx = app.state.ctx
+    return {
+        "running": ctx.render_busy,
+        "done": ctx.render_done,
+        "error": ctx.render_error,
+    }
+
+
+# --- Conduct ----------------------------------------------------------------
+
+@app.post("/api/conduct/start")
+async def conduct_start():
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+
+    ctx: _Ctx = app.state.ctx
+    script = PROJECT_ROOT / "2_conduct.py"
+    proc = subprocess.Popen(
+        [sys.executable, str(script)],
+        cwd=str(PROJECT_ROOT),
+    )
+    ctx.subprocesses.append(proc)
+    return {"status": "started", "pid": proc.pid}

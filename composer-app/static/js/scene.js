@@ -209,7 +209,7 @@ const BELL_FIX = new THREE.Euler(0, -Math.PI / 2, 0);
 const instruments = [];
 
 function placeInstrument(
-  model, x, y, z, yawDeg = 0, modelRotation = BELL_FIX, sizeTarget = 1.2, spotLight = null
+  model, x, y, z, yawDeg = 0, modelRotation = BELL_FIX, sizeTarget = 1.2, spotLight = null, kind = null
 ) {
   model.traverse((child) => {
     if (child.isMesh) {
@@ -245,17 +245,11 @@ function placeInstrument(
     spotLight.intensity = 200; // Super bright
   }
 
-  instruments.push({ outer, inner, baseYaw, targetYaw: baseYaw, currentYaw: baseYaw });
+  instruments.push({ outer, inner, baseYaw, targetYaw: baseYaw, currentYaw: baseYaw, kind });
   return outer;
 }
 
 const loader = new GLTFLoader();
-
-function precompile(model) {
-  scene.add(model);
-  renderer.compile(scene, camera);
-  scene.remove(model);
-}
 
 // --- VIOLINS (Tier 0 & 1 Left) ---
 const VIOLIN_SLOTS = initSlotsWithLights([
@@ -267,15 +261,14 @@ function addViolin() {
   if (violinCache.count + violinCache.pending >= VIOLIN_SLOTS.length) return;
   if (!violinCache.scene) { violinCache.pending++; return; }
   const slot = VIOLIN_SLOTS[violinCache.count];
-  placeInstrument(violinCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 30, VIOLIN_ROT, 1.2, slot.light);
+  placeInstrument(violinCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 30, VIOLIN_ROT, 1.2, slot.light, "violin");
   violinCache.count++;
 }
-// FIXED PATH HERE
 loader.load("/static/violon_high/scene.gltf", (gltf) => {
   violinCache.scene = gltf.scene;
-  precompile(gltf.scene.clone(true));
+  addViolin(); // auto-place on load
   while (violinCache.pending > 0 && violinCache.count < VIOLIN_SLOTS.length) { violinCache.pending--; addViolin(); }
-}, undefined, (err) => console.error("violon load failed", err));
+}, undefined, (err) => console.error("violin load failed", err));
 
 
 // --- FLUTES (Tier 0 Right) ---
@@ -287,12 +280,12 @@ function addFlute() {
   if (fluteCache.count + fluteCache.pending >= FLUTE_SLOTS.length) return;
   if (!fluteCache.scene) { fluteCache.pending++; return; }
   const slot = FLUTE_SLOTS[fluteCache.count];
-  placeInstrument(fluteCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -30, FLUTE_ROT, 1.2, slot.light);
+  placeInstrument(fluteCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -30, FLUTE_ROT, 1.2, slot.light, "flute");
   fluteCache.count++;
 }
 loader.load("/static/basic_flute/scene.gltf", (gltf) => {
   fluteCache.scene = gltf.scene;
-  precompile(gltf.scene.clone(true));
+  addFlute(); // auto-place on load
   while (fluteCache.pending > 0 && fluteCache.count < FLUTE_SLOTS.length) { fluteCache.pending--; addFlute(); }
 }, undefined, (err) => console.error("flute load failed", err));
 
@@ -342,12 +335,12 @@ function addTrumpet() {
   if (trumpetCache.count + trumpetCache.pending >= TRUMPET_SLOTS.length) return;
   if (!trumpetCache.scene) { trumpetCache.pending++; return; }
   const slot = TRUMPET_SLOTS[trumpetCache.count];
-  placeInstrument(trumpetCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -25, TRUMPET_ROT, 1.2, slot.light);
+  placeInstrument(trumpetCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -25, TRUMPET_ROT, 1.2, slot.light, "trumpet");
   trumpetCache.count++;
 }
 loader.load("/static/trumpet/scene.gltf", (gltf) => {
   trumpetCache.scene = gltf.scene;
-  precompile(gltf.scene.clone(true));
+  addTrumpet(); // auto-place on load
   while (trumpetCache.pending > 0 && trumpetCache.count < TRUMPET_SLOTS.length) { trumpetCache.pending--; addTrumpet(); }
 }, undefined, (err) => console.error("trumpet load failed", err));
 
@@ -380,12 +373,12 @@ function addDrum() {
   if (drumCache.count + drumCache.pending >= DRUM_SLOTS.length) return;
   if (!drumCache.scene) { drumCache.pending++; return; }
   const slot = DRUM_SLOTS[drumCache.count];
-  placeInstrument(drumCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 0, DRUM_ROT, 1.5, slot.light);
+  placeInstrument(drumCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 0, DRUM_ROT, 1.5, slot.light, "drums");
   drumCache.count++;
 }
 loader.load("/static/timpani_drum/scene.gltf", (gltf) => {
   drumCache.scene = gltf.scene;
-  precompile(gltf.scene.clone(true));
+  addDrum(); // auto-place on load
   while (drumCache.pending > 0 && drumCache.count < DRUM_SLOTS.length) { drumCache.pending--; addDrum(); }
 }, undefined, (err) => console.error("drum load failed", err));
 
@@ -397,13 +390,12 @@ const pianoCache = { scene: null, placed: false, pending: false };
 function addPiano() {
   if (pianoCache.placed) return;
   if (!pianoCache.scene) { pianoCache.pending = true; return; }
-  placeInstrument(pianoCache.scene.clone(true), 0, 0.8, -4.5, 5, PIANO_ROT, 2.0, pianoLight);
+  placeInstrument(pianoCache.scene.clone(true), 0, 0.8, -4.5, 5, PIANO_ROT, 2.0, pianoLight, "piano");
   pianoCache.placed = true;
 }
 loader.load("/static/yamaha_m1a_piano/scene.gltf", (gltf) => {
   pianoCache.scene = gltf.scene;
-  precompile(gltf.scene.clone(true));
-  if (pianoCache.pending) { pianoCache.pending = false; addPiano(); }
+  addPiano(); // auto-place on load (also drains pending flag)
 }, undefined, (err) => console.error("piano load failed", err));
 
 
@@ -417,16 +409,16 @@ window.addEventListener("instrument:add", (e) => {
   else if (kind === "obo soprano" || kind === "oboe") addOboe();
   else if (kind === "french horn" || kind === "french_horn") addFrenchHorn();
   else if (kind === "trombone") addTrombone();
-  else if (kind === "drum") addDrum();
+  else if (kind === "drum" || kind === "drums") addDrum();
 });
 
 const raycaster = new THREE.Raycaster();
-const mouseNDC = new THREE.Vector2();
+const _cursorNDC = new THREE.Vector2();
+let _gestureHovered = null;
 
-window.addEventListener("mousemove", (e) => {
-  mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
-  mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
-  raycaster.setFromCamera(mouseNDC, camera);
+function applyHover(ndcX, ndcY) {
+  _cursorNDC.set(ndcX, ndcY);
+  raycaster.setFromCamera(_cursorNDC, camera);
   const hits = raycaster.intersectObjects(instruments.map((i) => i.outer), true);
 
   let hovered = null;
@@ -441,7 +433,54 @@ window.addEventListener("mousemove", (e) => {
       ? inst.baseYaw - Math.sign(inst.baseYaw || 1) * HOVER_SWING
       : inst.baseYaw;
   }
+  return hovered;
+}
+
+// Mouse hover (fallback / desktop)
+window.addEventListener("mousemove", (e) => {
+  applyHover(
+    (e.clientX / window.innerWidth) * 2 - 1,
+    -(e.clientY / window.innerHeight) * 2 + 1,
+  );
 });
+
+// Gesture: pointing finger drives the raycaster in real-time
+window.addEventListener("gesture:point", (e) => {
+  _gestureHovered = applyHover(e.detail.x, e.detail.y);
+});
+
+// Gesture: dwell-select confirms whichever instrument the finger is resting on
+window.addEventListener("gesture:dwell-select", () => {
+  if (_gestureHovered?.kind) {
+    window.dispatchEvent(
+      new CustomEvent("instrument:gesture-selected", { detail: { kind: _gestureHovered.kind } }),
+    );
+  }
+});
+
+// Shared helper — opens curtains from any source
+function openCurtains() {
+  document.querySelectorAll(".curtain").forEach((c) => c.classList.add("open"));
+  const hint = document.getElementById("gesture-hint");
+  if (hint) {
+    hint.classList.add("hidden");
+    setTimeout(() => hint.remove(), 1500);
+  }
+}
+
+// Gesture: curtains sweep open
+window.addEventListener("gesture:curtain-open", openCurtains);
+
+// Fallback: click the hint overlay
+document.getElementById("gesture-hint")?.addEventListener("click", openCurtains);
+
+// Fallback: Space bar
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Space" || e.code === "Enter") openCurtains();
+});
+
+// Fallback: auto-open after 5 s so the stage is never permanently hidden
+setTimeout(openCurtains, 5000);
 
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -498,7 +537,6 @@ function mirrorX(model) {
 loader.load("/rigged_hand/scene.gltf", (gltf) => {
   const leftHand = gltf.scene.clone(true);
   makeWhite(leftHand);
-  precompile(leftHand.clone(true));
   placeInstrument(leftHand, -2.0, 0.1, 2.5, 0, HAND_ROT, 1.4);
 
   const rightHand = gltf.scene.clone(true);
