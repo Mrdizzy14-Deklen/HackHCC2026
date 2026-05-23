@@ -355,13 +355,55 @@ def _upload_mix_to_treble_trouble(wav_path: Path, session_id: str) -> str:
         return json.load(resp).get("audioId")
 
 
+def _mixdown_stems_to_export(sid: str) -> Path | None:
+    """Sum the rendered stems into exports/<sid>.wav.
+
+    Fallback for when there's no desktop conduct export — the browser-side
+    conduct plays stems live but doesn't write a combined file, so we build one
+    from the rendered stems on publish.
+    """
+    import numpy as np
+    from scipy.io import wavfile
+
+    from hackhcc.composition import session_dir
+
+    stems_path = session_dir(sid) / "stems"
+    stem_files = sorted(stems_path.glob("*.wav")) if stems_path.is_dir() else []
+    if not stem_files:
+        return None
+
+    sr = 44_100
+    tracks: list = []
+    for f in stem_files:
+        sr, raw = wavfile.read(f)
+        a = raw.astype(np.float32)
+        if raw.dtype.kind in "iu":            # integer PCM → float [-1, 1]
+            a /= float(np.iinfo(raw.dtype).max)
+        if a.ndim > 1:                         # stereo → mono
+            a = a.mean(axis=1)
+        tracks.append(a)
+
+    length = max(len(a) for a in tracks)
+    mix = np.zeros(length, dtype=np.float32)
+    for a in tracks:
+        mix[: len(a)] += a
+    peak = float(np.max(np.abs(mix))) or 1.0
+    mix = np.clip(mix / peak * 0.92, -1.0, 1.0)
+
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    out = EXPORTS_DIR / f"{sid}.wav"
+    wavfile.write(out, sr, (mix * 32767).astype(np.int16))
+    return out
+
+
 @app.post("/api/publish")
 async def publish():
     """Hand the finished song off to Treble Trouble to be named + published.
 
-    Uploads the exported mix (exports/<session>.wav) into the web app's GridFS,
-    then returns a /publish URL the browser should redirect to so the conductor
-    can log in, name the piece, and publish it to the leaderboard.
+    Uses the desktop conduct export (exports/<session>.wav) if present, else
+    mixes the rendered stems into one. Uploads it into the web app's GridFS and
+    returns a /publish URL the browser redirects to, so the conductor can log
+    in, name the piece, and publish it to the leaderboard.
     """
     sid = _read_active_session()
     if not sid:
@@ -369,8 +411,11 @@ async def publish():
 
     wav = EXPORTS_DIR / f"{sid}.wav"
     if not wav.is_file():
+        # No desktop export — mix the rendered stems into one file.
+        wav = await asyncio.to_thread(_mixdown_stems_to_export, sid)
+    if not wav or not wav.is_file():
         raise HTTPException(
-            400, "No exported song yet — finish conducting and press E to export first"
+            400, "Nothing to publish yet — record your parts and render first"
         )
 
     try:

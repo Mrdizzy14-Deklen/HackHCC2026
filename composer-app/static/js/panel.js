@@ -338,9 +338,8 @@ function onRenderDone() {
   btn.addEventListener("click", launchConduct);
   document.querySelector(".footer").appendChild(btn);
 
-  // Once the performance is conducted + exported (press E in the conduct
-  // window), this hands the finished song off to the web app to be named and
-  // published to the leaderboard.
+  // Hands the finished song off to the web app to be named and published to
+  // the leaderboard (mixes the rendered stems if there's no conduct export).
   const pub = document.createElement("button");
   pub.className   = "btn";
   pub.textContent = "Save & publish ↗";
@@ -576,7 +575,7 @@ async function publishSong() {
     const res = await fetch("/api/publish", { method: "POST" });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      showToast(err.detail || "Finish conducting & press E to export first");
+      showToast(err.detail || "Render your song first");
       return;
     }
     const data = await res.json();
