@@ -2,8 +2,9 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x09080c);
-scene.fog = new THREE.FogExp2(0x09080c, 0.045);
+scene.background = new THREE.Color(0x0a0208);  // deep crimson dark
+
+scene.fog = new THREE.FogExp2(0x0a0208, 0.038);
 
 const camera = new THREE.PerspectiveCamera(
   45,
@@ -71,6 +72,7 @@ document.body.appendChild(renderer.domElement);
 
 const NOTE_TEXTURE_CACHE = new Map();
 const ACTIVE_NOTE_SPRITES = [];
+const NOTE_SPRITE_POOL = [];   // reused sprite objects
 const NOTE_TRACK_COLORS = {
   trumpet: 0xffd166,
   violin:   0x8fd8ff,
@@ -105,12 +107,14 @@ function prewarmNoteTextures() {
   NOTE_TEXTURE_CACHE.set("icon", texture);
 }
 
-function spawnNote(trackId) {
-  if (!NOTE_TEXTURE_CACHE.has("icon")) {
-    prewarmNoteTextures();
+function _acquireSprite(trackId) {
+  if (NOTE_SPRITE_POOL.length > 0) {
+    const s = NOTE_SPRITE_POOL.pop();
+    s.material.opacity = 1;
+    s.material.color.setHex(NOTE_TRACK_COLORS[trackId] ?? NOTE_TRACK_COLORS.default);
+    return s;
   }
-
-  const sprite = new THREE.Sprite(
+  return new THREE.Sprite(
     new THREE.SpriteMaterial({
       map: NOTE_TEXTURE_CACHE.get("icon"),
       transparent: true,
@@ -119,7 +123,17 @@ function spawnNote(trackId) {
       color: NOTE_TRACK_COLORS[trackId] ?? NOTE_TRACK_COLORS.default,
     }),
   );
+}
 
+function _releaseSprite(sprite) {
+  scene.remove(sprite);
+  NOTE_SPRITE_POOL.push(sprite);
+}
+
+function spawnNote(trackId) {
+  if (!NOTE_TEXTURE_CACHE.has("icon")) prewarmNoteTextures();
+
+  const sprite = _acquireSprite(trackId);
   const worldPos = getInstrumentWorldPosition(trackId);
   sprite.position.copy(worldPos.clone().add(NOTE_EMIT_OFFSET));
   sprite.scale.set(0.65, 0.65, 1);
@@ -128,7 +142,6 @@ function spawnNote(trackId) {
     driftX: (Math.random() - 0.5) * 0.22,
     driftZ: (Math.random() - 0.5) * 0.22,
   };
-
   scene.add(sprite);
   ACTIVE_NOTE_SPRITES.push(sprite);
 }
@@ -196,7 +209,7 @@ createFootlight(3);
 const VIEWER = new THREE.Vector3(0, 1, 4);
 
 const ORCHESTRA_TIERS = [
-  { zMin: -1.0, zMax: 0.9, y: 0.0 },
+  { zMin: -1.0, zMax: 2.4, y: 0.0 },   // extended to cover crescent front
   { zMin: -2.6, zMax: -1.0, y: 0.24 },
   { zMin: -4.2, zMax: -2.6, y: 0.48 },
   { zMin: -6.5, zMax: -4.2, y: 0.72 },
@@ -211,65 +224,238 @@ function getTierY(z) {
   return ORCHESTRA_TIERS[ORCHESTRA_TIERS.length - 1].y;
 }
 
-function buildOrchestraRisers() {
-  const group = new THREE.Group();
-  const stageW = 10;
-  
-  const wood = new THREE.MeshStandardMaterial({ color: 0x2d241c, roughness: 0.82, metalness: 0.04 });
-  const lipMat = new THREE.MeshStandardMaterial({ color: 0x1a130c, roughness: 0.9, metalness: 0.02 });
-  const skirtMat = new THREE.MeshStandardMaterial({ color: 0x0f0a06, roughness: 0.95 });
+// Builds curved crescent-shaped tier platforms using ExtrudeGeometry.
+// After rotation.x = -π/2: shape XY → world XZ (Y negated), extrusion → world +Y.
+function buildCrescentRisers() {
+  const CURVE = 0.075;
+  const xL = -6.2, xR = 6.2;
+  const SEGS = 32;
+  const T = PLATFORM_THICKNESS;
+
+  const woodMat  = new THREE.MeshStandardMaterial({ color: 0x3a2a18, roughness: 0.80, metalness: 0.04 });
+  const lipMat   = new THREE.MeshStandardMaterial({ color: 0x1a130c, roughness: 0.92, metalness: 0.02 });
+  const skirtMat = new THREE.MeshStandardMaterial({ color: 0x110c06, roughness: 0.97 });
+
+  function arcShape(zBack, zFront) {
+    const s = new THREE.Shape();
+    for (let i = 0; i <= SEGS; i++) {
+      const x = xL + (xR - xL) * (i / SEGS);
+      const sy = -(zFront + x * x * CURVE);    // shape Y = -worldZ
+      i === 0 ? s.moveTo(x, sy) : s.lineTo(x, sy);
+    }
+    for (let i = SEGS; i >= 0; i--) {
+      const x = xL + (xR - xL) * (i / SEGS);
+      s.lineTo(x, -(zBack + x * x * CURVE));
+    }
+    s.closePath();
+    return s;
+  }
 
   for (const tier of ORCHESTRA_TIERS) {
-    const depth = tier.zMax - tier.zMin;
-    const centerZ = (tier.zMax + tier.zMin) / 2;
-    const topY = tier.y + PLATFORM_THICKNESS / 2;
+    // Deck
+    const deck = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(arcShape(tier.zMin, tier.zMax), { depth: T, bevelEnabled: false }),
+      woodMat
+    );
+    deck.rotation.x = -Math.PI / 2;
+    deck.position.y  = tier.y - T / 2;
+    deck.castShadow = true; deck.receiveShadow = true;
+    scene.add(deck);
 
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(stageW, PLATFORM_THICKNESS, depth), wood);
-    deck.position.set(0, topY, centerZ);
-    deck.castShadow = true; 
-    deck.receiveShadow = true; 
-    group.add(deck);
+    // Front lip (thin curved trim at the front edge of each tier)
+    const lipS = new THREE.Shape();
+    for (let i = 0; i <= SEGS; i++) {
+      const x = xL + (xR - xL) * (i / SEGS);
+      const sy = -(tier.zMax + x * x * CURVE);
+      i === 0 ? lipS.moveTo(x, sy) : lipS.lineTo(x, sy);
+    }
+    for (let i = SEGS; i >= 0; i--) {
+      const x = xL + (xR - xL) * (i / SEGS);
+      lipS.lineTo(x, -(tier.zMax + x * x * CURVE) + 0.09);
+    }
+    lipS.closePath();
+    const lip = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(lipS, { depth: 0.16, bevelEnabled: false }),
+      lipMat
+    );
+    lip.rotation.x = -Math.PI / 2;
+    lip.position.y  = tier.y - 0.16;
+    lip.receiveShadow = true;
+    scene.add(lip);
 
-    const lip = new THREE.Mesh(new THREE.BoxGeometry(stageW, 0.14, 0.08), lipMat);
-    lip.position.set(0, tier.y + 0.05, tier.zMax + 0.02);
-    lip.castShadow = true; 
-    lip.receiveShadow = true; 
-    group.add(lip);
-
+    // Vertical skirt face at the front of raised tiers
     if (tier.y > 0) {
-      const rise = tier.y;
-      const skirt = new THREE.Mesh(new THREE.BoxGeometry(stageW, rise, 0.12), skirtMat);
-      skirt.position.set(0, rise / 2, tier.zMax + 0.06);
-      skirt.castShadow = true; 
-      skirt.receiveShadow = true; 
-      group.add(skirt);
+      const skirtS = new THREE.Shape();
+      for (let i = 0; i <= SEGS; i++) {
+        const x = xL + (xR - xL) * (i / SEGS);
+        const sy = -(tier.zMax + x * x * CURVE);
+        i === 0 ? skirtS.moveTo(x, sy) : skirtS.lineTo(x, sy);
+      }
+      for (let i = SEGS; i >= 0; i--) {
+        const x = xL + (xR - xL) * (i / SEGS);
+        skirtS.lineTo(x, -(tier.zMax + x * x * CURVE) + 0.11);
+      }
+      skirtS.closePath();
+      const skirt = new THREE.Mesh(
+        new THREE.ExtrudeGeometry(skirtS, { depth: tier.y, bevelEnabled: false }),
+        skirtMat
+      );
+      skirt.rotation.x = -Math.PI / 2;
+      skirt.position.y  = -tier.y;
+      skirt.receiveShadow = true;
+      scene.add(skirt);
     }
   }
-
-  for (const side of [-1, 1]) {
-    const ramp = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.5, 5.5), skirtMat);
-    ramp.position.set(side * (stageW / 2 - 0.2), 0.25, -2.5);
-    ramp.rotation.y = side * 0.08;
-    ramp.receiveShadow = true; 
-    group.add(ramp);
-  }
-
-  scene.add(group);
-  return group;
 }
 
-buildOrchestraRisers();
+buildCrescentRisers();
 
-// Reflective stage floor — shows colored wash reflections
+// Wood stage floor
 (function addFloor() {
-  const geo = new THREE.PlaneGeometry(60, 60);
-  const mat = new THREE.MeshStandardMaterial({ color: 0x0c0a0f, roughness: 0.08, metalness: 0.45 });
+  const geo = new THREE.PlaneGeometry(24, 22);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x4a2e0e,
+    roughness: 0.80,
+    metalness: 0.03,
+    emissive: 0x180a03,
+    emissiveIntensity: 0.18,
+  });
   const floor = new THREE.Mesh(geo, mat);
   floor.rotation.x = -Math.PI / 2;
-  floor.position.set(0, -0.05, -3);
+  floor.position.set(0, -0.05, -1);
   floor.receiveShadow = true;
   scene.add(floor);
+
+  // Plank lines for wood grain feel
+  const plankMat = new THREE.MeshStandardMaterial({ color: 0x2e1a07, roughness: 0.9, metalness: 0.0 });
+  for (let i = -6; i <= 6; i++) {
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(24, 0.008, 0.025), plankMat);
+    plank.position.set(0, -0.04, i * 1.75 - 1);
+    scene.add(plank);
+  }
 })();
+
+// Red velvet curtain backdrop
+function buildCurtainBackdrop() {
+  const group = new THREE.Group();
+  const totalWidth = 26;
+  const height = 15;
+  const numFolds = 22;
+  const foldW = totalWidth / numFolds;
+  const backZ = -8.8;
+
+  const frontMat = new THREE.MeshStandardMaterial({
+    color: 0x7a0c18, roughness: 0.97, metalness: 0.0,
+    emissive: 0x2a0206, emissiveIntensity: 0.35,
+    side: THREE.FrontSide,
+  });
+  const foldMat = new THREE.MeshStandardMaterial({
+    color: 0x3a0408, roughness: 1.0, metalness: 0.0,
+    side: THREE.FrontSide,
+  });
+
+  for (let i = 0; i < numFolds; i++) {
+    const x = -totalWidth / 2 + (i + 0.5) * foldW;
+    const zOff = (i % 2 === 0) ? 0 : 0.32;
+    const panel = new THREE.Mesh(
+      new THREE.BoxGeometry(foldW + 0.02, height, 0.06),
+      i % 2 === 0 ? frontMat : foldMat
+    );
+    panel.position.set(x, height / 2 - 1.8, backZ + zOff);
+    panel.receiveShadow = true;
+    group.add(panel);
+  }
+
+  // Top valance
+  const valanceMat = new THREE.MeshStandardMaterial({ color: 0x4a0508, roughness: 0.92, metalness: 0.02 });
+  const valance = new THREE.Mesh(new THREE.BoxGeometry(totalWidth + 2, 2.2, 0.9), valanceMat);
+  valance.position.set(0, height - 1.8, backZ + 0.12);
+  group.add(valance);
+
+  scene.add(group);
+}
+buildCurtainBackdrop();
+
+// Colored section floor markers (strings / woodwinds / brass / percussion)
+function buildSectionMarkers() {
+  const sections = [
+    { color: 0x0e0820, xC: -2.8, zC:  0.0, w: 7.0, d: 4.2 },  // strings (left)
+    { color: 0x03140a, xC:  2.8, zC:  0.0, w: 7.0, d: 4.2 },  // woodwinds (right)
+    { color: 0x140e02, xC:  0.0, zC: -3.2, w: 13,  d: 3.2 },  // brass (mid)
+    { color: 0x14030a, xC:  0.0, zC: -5.2, w: 13,  d: 3.0 },  // percussion (back)
+  ];
+  for (const s of sections) {
+    const mat = new THREE.MeshStandardMaterial({
+      color: s.color,
+      roughness: 0.92,
+      metalness: 0.0,
+      emissive: s.color,
+      emissiveIntensity: 0.55,
+      transparent: true,
+      opacity: 0.82,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(s.w, s.d), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(s.xC, 0.01, s.zC);
+    scene.add(mesh);
+  }
+}
+buildSectionMarkers();
+
+// Conductor's stand — at z=9 so it appears at the very bottom of the camera view.
+// Camera is at (0,3.5,10); bottom-of-screen at z=9 intersects world Y≈2.8.
+// The lectern top is placed at world Y≈2.9 so it just peeks into frame.
+function buildConductorsStand() {
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x2c1505, roughness: 0.72, metalness: 0.07 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x160b02, roughness: 0.88, metalness: 0.03 });
+  const group = new THREE.Group();
+
+  // Conductor's podium step (wide base)
+  const podium = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.28, 1.6), woodMat);
+  podium.position.y = 0.14;
+  podium.castShadow = true; podium.receiveShadow = true;
+  group.add(podium);
+
+  // Decorative front panel
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.26, 0.06), darkMat);
+  panel.position.set(0, 0.13, 0.83);
+  group.add(panel);
+
+  // Tall central post — must reach y≈2.5 locally
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.075, 2.3, 10), woodMat);
+  post.position.set(0, 0.28 + 1.15, -0.06);
+  post.castShadow = true;
+  group.add(post);
+
+  // Angled lectern reading surface
+  const lectern = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.06, 0.65), darkMat);
+  lectern.position.set(0, 0.28 + 2.3 + 0.03, 0.12);
+  lectern.rotation.x = THREE.MathUtils.degToRad(-20);
+  lectern.castShadow = true;
+  group.add(lectern);
+
+  // Bottom lip (holds sheet music)
+  const lip = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.055, 0.055), woodMat);
+  lip.position.set(0, 0.28 + 2.3 - 0.04, 0.42);
+  group.add(lip);
+
+  // Side wings on the lectern
+  for (const sx of [-1, 1]) {
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.3, 0.55), darkMat);
+    wing.position.set(sx * 0.58, 0.28 + 2.3 + 0.15, 0.08);
+    group.add(wing);
+  }
+
+  // Warm reading light
+  const light = new THREE.PointLight(0xffc060, 2.0, 3.5);
+  light.position.set(0, 0.28 + 2.3 + 0.5, 0.3);
+  group.add(light);
+
+  // Place so world Y=0 is the floor; group.position.y=0 means podium base is on floor
+  group.position.set(0, 0, 9.0);
+  scene.add(group);
+}
+buildConductorsStand();
 
 // ── Dynamic lights ────────────────────────────────────────────────────────
 let _curtainsOpen   = false;
@@ -378,10 +564,11 @@ function placeInstrument(
 
 const loader = new GLTFLoader();
 
-// --- VIOLINS (Tier 0 & 1 Left) ---
+// --- VIOLINS: 2 columns (x=-2, x=-3.8) × 2 rows (tier0 front, tier1 back) ---
+// crescent z = zBase + x²*0.075
 const VIOLIN_SLOTS = initSlotsWithLights([
-  [-1.5, 0.6, 0.2], [-3.0, 0.6, 0.2], [-4.5, 0.6, 0.2], 
-  [-2.0, 0.8, -1.8], [-3.5, 0.8, -1.8]                  
+  [-2.4, 0.6,  0.50], [-2.6, 0.6, -1.50],
+  [-4.2, 0.6,  1.28], [-4.2, 0.8, -0.70]                  // column 3 front only
 ]);
 const violinCache = { scene: null, count: 0, pending: 0 };
 function addViolin() {
@@ -397,9 +584,9 @@ loader.load("/static/violon_high/scene.gltf", (gltf) => {
 }, undefined, (err) => console.error("violin load failed", err));
 
 
-// --- FLUTES (Tier 0 Right) ---
+// --- FLUTES: 2 columns (x=2, x=3.8) × front rows (mirror of violins) ---
 const FLUTE_SLOTS = initSlotsWithLights([
-  [1.5, 0.4, 0.2], [3.0, 0.4, 0.2], [4.5, 0.4, 0.2] 
+                  []        // column 2 front
 ]);
 const fluteCache = { scene: null, count: 0, pending: 0 };
 function addFlute() {
@@ -415,9 +602,9 @@ loader.load("/static/basic_flute/scene.gltf", (gltf) => {
 }, undefined, (err) => console.error("flute load failed", err));
 
 
-// --- OBOES (Tier 1 Right) ---
+// --- OBOES: column at x=3.8 back row (shares column with flute front) ---
 const OBOE_SLOTS = initSlotsWithLights([
-  [2.0, 0.4, -1.8], [3.5, 0.4, -1.8] 
+  [3.8, 0.4, -0.70],
 ]);
 const oboeCache = { scene: null, count: 0, pending: 0 };
 function addOboe() {
@@ -433,9 +620,9 @@ loader.load("/static/oboe/scene.gltf", (gltf) => {
 }, undefined, () => { /* oboe model not included */ });
 
 
-// --- FRENCH HORNS (Tier 2 Left) ---
+// --- FRENCH HORNS: column at x=-2 and x=-3.8, tier2 ---
 const HORN_SLOTS = initSlotsWithLights([
-  [-1.5, 0.4, -3.4], [-3.0, 0.4, -3.4], [-4.5, 0.4, -3.4] 
+  [-2.0, 0.4, -3.10], [-3.8, 0.4, -2.32],
 ]);
 const hornCache = { scene: null, count: 0, pending: 0 };
 function addFrenchHorn() {
@@ -451,9 +638,10 @@ loader.load("/static/french_horn/scene.gltf", (gltf) => {
 }, undefined, () => { /* french horn model not included */ });
 
 
-// --- TRUMPETS (Tier 2 Right) ---
+// --- TRUMPETS: column at x=2 and x=3.8, tier2 (mirror of horns) ---
 const TRUMPET_SLOTS = initSlotsWithLights([
-  [1.5, 0.4, -3.4], [3.0, 0.4, -3.4], [4.5, 0.4, -3.4] 
+  [2.0, 0.4,  0.50], [2.0, 0.4, -1.50],  
+  [3.8, 0.4,  1.28], [4.2, 0.8, -0.70]  
 ]);
 const trumpetCache = { scene: null, count: 0, pending: 0 };
 function addTrumpet() {
@@ -469,10 +657,10 @@ loader.load("/static/trumpet/scene.gltf", (gltf) => {
 }, undefined, (err) => console.error("trumpet load failed", err));
 
 
-// --- TROMBONES (Tier 3 Flanking Piano) ---
+// --- TROMBONES: columns at x=±2 and x=±3.8, tier3 ---
 const TROMBONE_SLOTS = initSlotsWithLights([
-  [-2.0, 0.4, -5.0], [-3.5, 0.4, -5.0], 
-  [2.0, 0.4, -5.0], [3.5, 0.4, -5.0]    
+  [-2.0, 0.4, -4.70], [-3.8, 0.4, -4.08],
+  [ 2.0, 0.4, -4.70], [ 3.8, 0.4, -4.08],
 ]);
 const tromboneCache = { scene: null, count: 0, pending: 0 };
 function addTrombone() {
@@ -488,9 +676,9 @@ loader.load("/static/trombone/scene.gltf", (gltf) => {
   while (tromboneCache.pending > 0 && tromboneCache.count < TROMBONE_SLOTS.length) { tromboneCache.pending--; addTrombone(); }
 }, undefined, () => { /* trombone model not included */ });
 
-// --- DRUMS (Tier 3 Far Edges) ---
+// --- DRUMS: outer edges of brass arc, slightly back ---
 const DRUM_SLOTS = initSlotsWithLights([
-  [-4.0, 1, -4.5], [4.0, 1, -4.5]
+  [-1.7, 0.8, -5],
 ]);
 const drumCache = { scene: null, count: 0, pending: 0 };
 function addDrum() {
@@ -506,14 +694,14 @@ loader.load("/static/timpani_drum/scene.gltf", (gltf) => {
 }, undefined, (err) => console.error("drum load failed", err));
 
 // --- PIANO (Tier 3 Center) ---
-const PIANO_ROT = new THREE.Euler(0, 0, 0);
-const pianoLight = createInstrumentSpotlight(0, 0.8, -4.5); 
+const PIANO_ROT = new THREE.Euler(0, -0.5, 0);
+const pianoLight = createInstrumentSpotlight(0, 0.8, -5.5);
 const pianoCache = { scene: null, placed: false, pending: false };
 
 function addPiano() {
   if (pianoCache.placed) return;
   if (!pianoCache.scene) { pianoCache.pending = true; return; }
-  placeInstrument(pianoCache.scene.clone(true), 0, 0.8, -4.5, 5, PIANO_ROT, 2.0, pianoLight, "piano");
+  placeInstrument(pianoCache.scene.clone(true), 1, 0.8, -5, 5, PIANO_ROT, 2.0, pianoLight, "piano");
   pianoCache.placed = true;
 }
 loader.load("/static/yamaha_m1a_piano/scene.gltf", (gltf) => {
@@ -710,8 +898,7 @@ function animate() {
     const progress = Math.min(1, age / NOTE_LIFETIME_MS);
 
     if (progress >= 1) {
-      scene.remove(sprite);
-      sprite.material.dispose();
+      _releaseSprite(sprite);
       ACTIVE_NOTE_SPRITES.splice(i, 1);
       continue;
     }
@@ -743,6 +930,36 @@ function animate() {
   renderer.render(scene, camera);
 }
 animate();
+
+
+function makeWhite(model) {
+  model.traverse(child => {
+    if (child.isMesh) {
+      child.material = new THREE.MeshStandardMaterial({
+        color: 0xffffff, roughness: 0.3, metalness: 0.0,
+      });
+    }
+  });
+}
+
+function mirrorX(model) {
+  model.traverse(child => {
+    if (child.isMesh && child.geometry) {
+      const geo = child.geometry.clone();
+      const pos = geo.attributes.position;
+      for (let i = 0; i < pos.count; i++) pos.setX(i, -pos.getX(i));
+      pos.needsUpdate = true;
+      if (geo.attributes.normal) {
+        const norm = geo.attributes.normal;
+        for (let i = 0; i < norm.count; i++) norm.setX(i, -norm.getX(i));
+        norm.needsUpdate = true;
+      }
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+      child.geometry = geo;
+    }
+  });
+}
 
 
 fetch("/api/ping").catch((err) => console.error("ping failed", err));

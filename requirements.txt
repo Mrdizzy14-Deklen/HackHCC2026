@@ -8,7 +8,7 @@ scipy>=1.10.0
 librosa>=0.10.0
 pretty_midi>=0.2.10
 certifi>=2024.0.0
-basic-pitch>=0.3.0
+# basic-pitch requires tensorflow-macos, unsupported on Python 3.13; code falls back to librosa YIN
 replicate>=0.25.0
 fastapi
 uvicorn
