@@ -11,7 +11,7 @@
  *   7. Thumbs-up again (or click) → launch conduct
  */
 
-import { initGestures } from "./gestures.js";
+import { initGestures, stopGestures } from "./gestures.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -339,9 +339,224 @@ function onRenderDone() {
   document.querySelector(".footer").appendChild(btn);
 }
 
+// ---------------------------------------------------------------------------
+// Conduct Mode  (browser-side Web Audio API)
+// ---------------------------------------------------------------------------
+
+let _conductCtx          = null;
+let _conductNodes        = {};    // track_id → { buffer, gainNode, sourceNode, volume }
+let _inConductMode       = false;
+let _conductHoveredKind  = null;  // instrument currently under finger
+let _conductRerecording  = false; // re-hum in progress
+
 async function launchConduct() {
-  try { await fetch("/api/conduct/start", { method: "POST" }); }
-  catch (err) { console.warn("[panel] conduct/start failed:", err); }
+  let data;
+  try {
+    const resp = await fetch("/api/conduct/start", { method: "POST" });
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({}));
+      showToast(e.detail ?? "Not ready — render first");
+      return;
+    }
+    data = await resp.json();
+  } catch (err) {
+    showToast("Conduct unavailable");
+    return;
+  }
+  const stems = data.stems ?? [];
+  if (!stems.length) { showToast("No stems found — render first"); return; }
+  await _enterConductMode(stems);
+}
+
+async function _enterConductMode(stems) {
+  _inConductMode = true;
+  $panel.classList.remove("collapsed");
+  $title.textContent = "Conducting";
+  $sub.textContent   = "Loading stems…";
+
+  document.querySelector(".record").style.display     = "none";
+  document.querySelector(".notes-wrap").style.display = "none";
+
+  // Volume-meter rows
+  $sections.innerHTML = "";
+  for (const s of stems) {
+    const row = document.createElement("div");
+    row.className       = "conduct-row";
+    row.dataset.trackId = s.track_id;
+    row.innerHTML = `
+      <span class="conduct-name">${s.name}</span>
+      <div class="conduct-bar"><div class="conduct-fill" style="width:100%"></div></div>
+      <button class="conduct-solo" data-tid="${s.track_id}" title="Solo 3 s">▶</button>
+    `;
+    $sections.appendChild(row);
+  }
+
+  document.querySelector(".footer").innerHTML = `
+    <button class="btn" id="btn-c-pause">⏸ Pause</button>
+    <button class="btn primary" id="btn-c-play">▶ Play All</button>
+  `;
+
+  // Web Audio
+  _conductCtx   = new AudioContext();
+  _conductNodes = {};
+  await Promise.all(stems.map(async (s) => {
+    try {
+      const ab  = await fetch(s.url).then(r => r.arrayBuffer());
+      const buf = await _conductCtx.decodeAudioData(ab);
+      _conductNodes[s.track_id] = { buffer: buf, gainNode: null, sourceNode: null, volume: 1.0 };
+    } catch (e) { console.warn("[conduct] load failed:", s.track_id, e); }
+  }));
+
+  $sub.textContent = "Point at an instrument — raise hand to raise volume";
+
+  document.querySelectorAll(".conduct-solo").forEach(btn =>
+    btn.addEventListener("click", () => _soloStem(btn.dataset.tid)));
+  document.getElementById("btn-c-play").addEventListener("click",  _playAllStems);
+  document.getElementById("btn-c-pause").addEventListener("click", _toggleConductPause);
+
+  setTimeout(_playAllStems, 300);
+}
+
+function _startStemSource(trackId) {
+  const node = _conductNodes[trackId];
+  if (!node?.buffer) return;
+  if (node.sourceNode) { try { node.sourceNode.stop(); } catch (_) {} }
+  const gain = _conductCtx.createGain();
+  gain.gain.value = node.volume;
+  gain.connect(_conductCtx.destination);
+  const src = _conductCtx.createBufferSource();
+  src.buffer = node.buffer;
+  src.loop   = true;
+  src.connect(gain);
+  src.start(0);
+  node.gainNode   = gain;
+  node.sourceNode = src;
+}
+
+function _playAllStems() {
+  if (_conductCtx.state === "suspended") _conductCtx.resume();
+  Object.keys(_conductNodes).forEach(_startStemSource);
+  Object.keys(_conductNodes).forEach(tid =>
+    window.dispatchEvent(new CustomEvent("conduct:volume", { detail: { kind: tid, volume: _conductNodes[tid].volume } }))
+  );
+  const btn = document.getElementById("btn-c-pause");
+  if (btn) btn.textContent = "⏸ Pause";
+}
+
+function _soloStem(trackId) {
+  Object.keys(_conductNodes).forEach(tid => {
+    const n = _conductNodes[tid];
+    if (n.gainNode) n.gainNode.gain.setTargetAtTime(tid === trackId ? 1 : 0.04, _conductCtx.currentTime, 0.1);
+  });
+  document.querySelectorAll(".conduct-row").forEach(r =>
+    r.classList.toggle("soloing", r.dataset.trackId === trackId));
+  setTimeout(() => {
+    Object.keys(_conductNodes).forEach(tid => {
+      const n = _conductNodes[tid];
+      if (n.gainNode) n.gainNode.gain.setTargetAtTime(n.volume, _conductCtx.currentTime, 0.15);
+    });
+    document.querySelectorAll(".conduct-row").forEach(r => r.classList.remove("soloing"));
+  }, 3000);
+}
+
+function _toggleConductPause() {
+  if (!_conductCtx) return;
+  const btn = document.getElementById("btn-c-pause");
+  if (_conductCtx.state === "running") {
+    _conductCtx.suspend();
+    if (btn) btn.textContent = "▶ Resume";
+  } else {
+    _conductCtx.resume();
+    if (btn) btn.textContent = "⏸ Pause";
+  }
+}
+
+function _setConductVolume(trackId, vol) {
+  const node = _conductNodes[trackId];
+  if (!node) return;
+  node.volume = Math.max(0, Math.min(1, vol));
+  if (node.gainNode)
+    node.gainNode.gain.setTargetAtTime(node.volume, _conductCtx.currentTime, 0.08);
+  const fill = document.querySelector(`.conduct-row[data-track-id="${trackId}"] .conduct-fill`);
+  if (fill) fill.style.width = `${node.volume * 100}%`;
+  window.dispatchEvent(new CustomEvent("conduct:volume", { detail: { kind: trackId, volume: node.volume } }));
+}
+
+// Re-hum a single instrument while all stems keep playing, then re-render all
+async function _rerecordInConduct(trackId) {
+  if (_conductRerecording) return;
+  _conductRerecording = true;
+  const name = tracks.find(t => t.id === trackId)?.name ?? trackId;
+  $sub.textContent = `🎙 Humming ${name}… ${HUM_SECONDS}s`;
+  document.querySelector(`.conduct-row[data-track-id="${trackId}"]`)?.classList.add("soloing");
+
+  try {
+    await fetch(`/api/tracks/${trackId}/hum?seconds=${HUM_SECONDS}`, { method: "POST" });
+    await new Promise((resolve, reject) => {
+      const h = setInterval(async () => {
+        const d = await fetch(`/api/tracks/${trackId}/hum/status`).then(r => r.json());
+        if (!d.recording && (d.done || d.error)) {
+          clearInterval(h);
+          d.error ? reject(new Error(d.error)) : resolve(d);
+        }
+      }, 500);
+    });
+
+    $sub.textContent = "Re-rendering all stems…";
+    renderStarted = false;
+    await fetch("/api/render", { method: "POST" });
+    await new Promise((resolve, reject) => {
+      const h = setInterval(async () => {
+        const d = await fetch("/api/render/status").then(r => r.json());
+        if (d.done)  { clearInterval(h); resolve(); }
+        if (d.error) { clearInterval(h); reject(new Error(d.error)); }
+      }, 2000);
+    });
+
+    await _reloadAllStems();
+    showToast(`✓ ${name} updated!`);
+    $sub.textContent = "Point at instrument + raise/lower hand for volume";
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+    $sub.textContent = "Error — try again";
+  } finally {
+    _conductRerecording = false;
+    document.querySelector(`.conduct-row[data-track-id="${trackId}"]`)?.classList.remove("soloing");
+  }
+}
+
+// Reload all audio buffers after a re-render (stems swap in seamlessly)
+async function _reloadAllStems() {
+  for (const trackId of Object.keys(_conductNodes)) {
+    try {
+      const ab  = await fetch(`/api/stems/${trackId}?t=${Date.now()}`).then(r => r.arrayBuffer());
+      const buf = await _conductCtx.decodeAudioData(ab);
+      _conductNodes[trackId].buffer = buf;
+      _startStemSource(trackId);
+    } catch (e) { console.warn("[conduct] reload failed:", trackId, e); }
+  }
+}
+
+// Both hands thumbs-up: stop MediaPipe, free camera, lock the composition
+function _finalizeConduct() {
+  stopGestures();
+  const camSrc = document.getElementById("gesture-cam");
+  if (camSrc?.srcObject) {
+    camSrc.srcObject.getTracks().forEach(t => t.stop());
+    camSrc.srcObject = null;
+  }
+  document.getElementById("cam-preview").style.display = "none";
+
+  $title.textContent = "Composition Locked!";
+  $sub.textContent   = "Camera is free. Stems are still playing.";
+  showToast("👍👍 Composition locked — camera released!");
+
+  document.querySelector(".footer").innerHTML = `
+    <button class="btn" id="btn-c-pause">⏸ Pause</button>
+    <button class="btn primary" id="btn-c-done">Done ✓</button>
+  `;
+  document.getElementById("btn-c-pause").addEventListener("click", _toggleConductPause);
+  document.getElementById("btn-c-done").addEventListener("click", () => showToast("Export coming soon!"));
 }
 
 // ---------------------------------------------------------------------------
@@ -423,9 +638,35 @@ window.addEventListener("instrument:gesture-selected", (e) => {
   selectTrack(e.detail.kind);
 });
 
-// Open palm → start humming
+// Open palm → re-hum hovered instrument (conduct) or start recording (setup)
 window.addEventListener("gesture:open-palm", () => {
-  if (activeTrackId && !isRecording) startRecording(activeTrackId);
+  if (_inConductMode) {
+    if (_conductHoveredKind && !_conductRerecording) {
+      _rerecordInConduct(_conductHoveredKind);
+    } else if (!_conductRerecording) {
+      _toggleConductPause();
+    }
+  } else if (activeTrackId && !isRecording) {
+    startRecording(activeTrackId);
+  }
+});
+
+// Instrument hovered while pointing → track which instrument + adjust volume
+window.addEventListener("instrument:hover", (e) => {
+  if (!e.detail.kind) return;
+  if (_inConductMode) {
+    _conductHoveredKind = e.detail.kind;
+    // raise hand (y→1) = loud, lower hand (y→-1) = quiet
+    const vol = Math.max(0, Math.min(1, (e.detail.y + 0.7) / 1.4));
+    _setConductVolume(e.detail.kind, vol);
+  }
+  document.querySelectorAll(".conduct-row").forEach(r =>
+    r.classList.toggle("pointed", r.dataset.trackId === e.detail.kind));
+});
+
+// Both hands thumbs-up → finalize and free the camera
+window.addEventListener("gesture:both-thumbs-up", () => {
+  if (_inConductMode) _finalizeConduct();
 });
 
 // Fist hold → voice add instrument

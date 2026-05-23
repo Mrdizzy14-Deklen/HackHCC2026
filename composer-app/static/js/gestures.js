@@ -37,6 +37,7 @@ let _palmLatch       = false;
 let _thumbsLatch     = false;
 let _curtainFired    = false;
 let _fistHoldFired   = false;
+let _bothThumbsLatch = false;
 
 // Dwell
 let _dwellCell  = null;
@@ -170,9 +171,17 @@ function _process(results, now) {
     }
   }
 
-  // ── Single-hand gestures ───────────────────────────────────────────────
+  // ── Both-hands thumbs-up → finalize (frees camera) ───────────────────
   const lm = hands[0];
   const g  = _classify(lm);
+
+  if (hands.length >= 2 && g === "thumbs-up" && _classify(hands[1]) === "thumbs-up") {
+    if (!_bothThumbsLatch) { _bothThumbsLatch = true; _emit("both-thumbs-up"); }
+  } else {
+    _bothThumbsLatch = false;
+  }
+
+  // ── Single-hand gestures ───────────────────────────────────────────────
 
   // ── Point ──
   if (g === "point") {

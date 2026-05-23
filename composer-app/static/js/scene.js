@@ -258,7 +258,13 @@ function initSlotsWithLights(coords) {
 }
 
 const BELL_FIX = new THREE.Euler(0, -Math.PI / 2, 0);
-const instruments = [];
+const instruments  = [];
+const _kindLights  = {};   // kind → [SpotLight, ...] for conduct volume visuals
+
+window.addEventListener("conduct:volume", (e) => {
+  const lights = _kindLights[e.detail.kind] ?? [];
+  for (const l of lights) l.intensity = e.detail.volume * 200;
+});
 
 function placeInstrument(
   model, x, y, z, yawDeg = 0, modelRotation = BELL_FIX, sizeTarget = 1.2, spotLight = null, kind = null
@@ -299,6 +305,10 @@ function placeInstrument(
   }
 
   instruments.push({ outer, inner, baseYaw, targetYaw: baseYaw, currentYaw: baseYaw, kind });
+  if (kind && spotLight) {
+    if (!_kindLights[kind]) _kindLights[kind] = [];
+    _kindLights[kind].push(spotLight);
+  }
   return outer;
 }
 
@@ -496,6 +506,11 @@ window.addEventListener("mousemove", (e) => {
 // Gesture: pointing finger drives the raycaster in real-time
 window.addEventListener("gesture:point", (e) => {
   _gestureHovered = applyHover(e.detail.x, e.detail.y);
+  if (_gestureHovered?.kind) {
+    window.dispatchEvent(new CustomEvent("instrument:hover", {
+      detail: { kind: _gestureHovered.kind, y: e.detail.y },
+    }));
+  }
 });
 
 // Gesture: dwell-select confirms whichever instrument the finger is resting on

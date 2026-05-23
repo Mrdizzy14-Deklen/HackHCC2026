@@ -294,17 +294,30 @@ async def render_status():
 
 # --- Conduct ----------------------------------------------------------------
 
+@app.get("/api/stems/{track_id}")
+async def serve_stem(track_id: str):
+    sid = _read_active_session()
+    if not sid:
+        raise HTTPException(400, "No active session")
+    from hackhcc.composition import session_dir
+    stem_path = session_dir(sid) / "stems" / f"{track_id}.wav"
+    if not stem_path.is_file():
+        raise HTTPException(404, f"Stem '{track_id}' not found — render first")
+    return FileResponse(str(stem_path), media_type="audio/wav")
+
+
 @app.post("/api/conduct/start")
 async def conduct_start():
     sid = _read_active_session()
     if not sid:
         raise HTTPException(400, "No active session")
-
-    ctx: _Ctx = app.state.ctx
-    script = PROJECT_ROOT / "2_conduct.py"
-    proc = subprocess.Popen(
-        [sys.executable, str(script)],
-        cwd=str(PROJECT_ROOT),
-    )
-    ctx.subprocesses.append(proc)
-    return {"status": "started", "pid": proc.pid}
+    comp = await asyncio.to_thread(load_composition, sid)
+    if not comp.flags.get("allow_conduct"):
+        raise HTTPException(400, f"Session '{sid}' is not ready — render first.")
+    from hackhcc.composition import session_dir
+    stems = []
+    for t in comp.tracks:
+        stem_path = session_dir(sid) / "stems" / f"{t.id}.wav"
+        if stem_path.is_file():
+            stems.append({"track_id": t.id, "name": t.name or t.id, "url": f"/api/stems/{t.id}"})
+    return {"status": "ready", "stems": stems, "session_id": sid}
