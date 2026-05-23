@@ -27,9 +27,9 @@ const FLUTE_ROT = new THREE.Euler(
 );
 
 const VIOLIN_ROT = new THREE.Euler(
-  THREE.MathUtils.degToRad(0),
-  THREE.MathUtils.degToRad(0),
-  THREE.MathUtils.degToRad(-20) 
+  THREE.MathUtils.degToRad(-45),
+  THREE.MathUtils.degToRad(20),
+  THREE.MathUtils.degToRad(10) 
 );
 
 const OBOE_ROT = new THREE.Euler(
@@ -253,8 +253,8 @@ const loader = new GLTFLoader();
 
 // --- VIOLINS (Tier 0 & 1 Left) ---
 const VIOLIN_SLOTS = initSlotsWithLights([
-  [-1.5, 0.4, 0.2], [-3.0, 0.4, 0.2], [-4.5, 0.4, 0.2], 
-  [-2.0, 0.4, -1.8], [-3.5, 0.4, -1.8]                  
+  [-1.5, 0.6, 0.2], [-3.0, 0.6, 0.2], [-4.5, 0.6, 0.2], 
+  [-2.0, 0.8, -1.8], [-3.5, 0.8, -1.8]                  
 ]);
 const violinCache = { scene: null, count: 0, pending: 0 };
 function addViolin() {
@@ -265,10 +265,10 @@ function addViolin() {
   violinCache.count++;
 }
 // FIXED PATH HERE
-loader.load("/static/violin/scene.gltf", (gltf) => {
+loader.load("/static/violon_high/scene.gltf", (gltf) => {
   violinCache.scene = gltf.scene;
   while (violinCache.pending > 0 && violinCache.count < VIOLIN_SLOTS.length) { violinCache.pending--; addViolin(); }
-}, undefined, (err) => console.error("violin load failed", err));
+}, undefined, (err) => console.error("violon load failed", err));
 
 
 // --- FLUTES (Tier 0 Right) ---
@@ -364,7 +364,7 @@ loader.load("/static/trombone/scene.gltf", (gltf) => {
 
 // --- DRUMS (Tier 3 Far Edges) ---
 const DRUM_SLOTS = initSlotsWithLights([
-  [-5.0, 0.4, -5.0], [5.0, 0.4, -5.0]
+  [-4.0, 1, -4.5], [4.0, 1, -4.5]
 ]);
 const drumCache = { scene: null, count: 0, pending: 0 };
 function addDrum() {
@@ -374,7 +374,7 @@ function addDrum() {
   placeInstrument(drumCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], 0, DRUM_ROT, 1.5, slot.light);
   drumCache.count++;
 }
-loader.load("/static/drum/scene.gltf", (gltf) => {
+loader.load("/static/timpani_drum/scene.gltf", (gltf) => {
   drumCache.scene = gltf.scene;
   while (drumCache.pending > 0 && drumCache.count < DRUM_SLOTS.length) { drumCache.pending--; addDrum(); }
 }, undefined, (err) => console.error("drum load failed", err));
