@@ -20,12 +20,6 @@ const TRUMPET_ROT = new THREE.Euler(
   THREE.MathUtils.degToRad(0)
 );
 
-const FLUTE_ROT = new THREE.Euler(
-  THREE.MathUtils.degToRad(10),
-  THREE.MathUtils.degToRad(-35),
-  THREE.MathUtils.degToRad(0) 
-);
-
 const VIOLIN_ROT = new THREE.Euler(
   THREE.MathUtils.degToRad(-45),
   THREE.MathUtils.degToRad(20),
@@ -76,7 +70,6 @@ const NOTE_SPRITE_POOL = [];   // reused sprite objects
 const NOTE_TRACK_COLORS = {
   trumpet: 0xffd166,
   violin:   0x8fd8ff,
-  flute:    0x98f7c5,
   piano:    0xffd1ff,
   drums:    0xffb8a8,
   default:  0xffffff,
@@ -597,28 +590,8 @@ loader.load("/static/violon_high/scene.gltf", (gltf) => {
 }, undefined, (err) => console.error("violin load failed", err));
 
 
-// --- FLUTES: 2 columns (x=2, x=3.8) × front rows (mirror of violins) ---
-const FLUTE_SLOTS = initSlotsWithLights([
-                  []        // column 2 front
-]);
-const fluteCache = { scene: null, count: 0, pending: 0 };
-function addFlute() {
-  if (fluteCache.count >= FLUTE_SLOTS.length) return;
-  if (!fluteCache.scene) { fluteCache.pending = true; return; }
-  const slots = FLUTE_SLOTS.slice(fluteCache.count);
-  fluteCache.count = FLUTE_SLOTS.length;
-  slots.forEach((slot, i) => setTimeout(() => {
-    const outer = placeInstrument(fluteCache.scene.clone(true), slot.pos[0], slot.pos[1], slot.pos[2], -30, FLUTE_ROT, 1.2, slot.light, "flute");
-    _startDropIn(outer);
-  }, i * 100));
-}
-loader.load("/static/basic_flute/scene.gltf", (gltf) => {
-  fluteCache.scene = gltf.scene;
-  if (fluteCache.pending) { fluteCache.pending = false; addFlute(); }
-}, undefined, (err) => console.error("flute load failed", err));
 
 
-// --- OBOES: column at x=3.8 back row (shares column with flute front) ---
 const OBOE_SLOTS = initSlotsWithLights([
   [3.8, 0.4, -0.70],
 ]);
@@ -757,7 +730,6 @@ window.addEventListener("instrument:add", (e) => {
   const kind = (e.detail?.kind ?? "trumpet").toLowerCase();
   if (kind === "trumpet") addTrumpet();
   else if (kind === "piano") addPiano();
-  else if (kind === "flute") addFlute();
   else if (kind === "violin") addViolin();
   else if (kind === "obo soprano" || kind === "oboe") addOboe();
   else if (kind === "french horn" || kind === "french_horn") addFrenchHorn();
