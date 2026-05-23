@@ -505,8 +505,11 @@ def _do_mix_lyrics_ace_step(sid: str, lyrics: str, final_path: Path, out: Path) 
     tags = ", ".join(filter(None, [
         mood,
         "vocal",
-        "singer",
-        "singing",
+        "natural voice",
+        "soft vocals",
+        "gentle singer",
+        "breathy",
+        "intimate",
         "lead vocals",
         "lyrics",
         *instruments,
@@ -537,8 +540,8 @@ def _do_mix_lyrics_ace_step(sid: str, lyrics: str, final_path: Path, out: Path) 
             "tags":                 tags,
             "lyrics":               fmt_lyrics,
             "duration":             60,
-            "guidance_scale":       7.0,
-            "lyric_guidance_scale": 7.0,   # 5–10 needed for actual vocal presence
+            "guidance_scale":       6.0,
+            "lyric_guidance_scale": 5.0,   # lower = more natural/breathy, higher = robotic
             "number_of_steps":      100,
             "seed":                 -1,
         },
@@ -558,9 +561,9 @@ def _do_mix_lyrics_ace_step(sid: str, lyrics: str, final_path: Path, out: Path) 
 
         # Warmth pass: gentle high-shelf rolloff above 10 kHz reduces harshness,
         # then blend 65% filtered + 35% original to keep transient clarity
-        sos    = butter(2, 10_000, fs=44_100, btype="low", output="sos")
+        sos    = butter(2, 14_000, fs=44_100, btype="low", output="sos")
         warm   = sosfiltfilt(sos, audio)
-        audio  = warm * 0.65 + audio * 0.35
+        audio  = warm * 0.45 + audio * 0.55
 
         # Normalize to -1 dBFS so it's loud but never clips
         peak  = np.max(np.abs(audio)) or 1.0
@@ -1002,9 +1005,12 @@ def _mixdown_stems_to_export(sid: str) -> Path | None:
 
 
 def _publish_wav_path(sid: str) -> Path | None:
-    """Pick the best mix to publish: final.wav > exports/<sid>.wav > stem mixdown."""
+    """Pick the best mix to publish: final_with_lyrics.wav > final.wav > exports."""
     from hackhcc.composition import session_dir
 
+    final_lyrics = session_dir(sid) / "final_with_lyrics.wav"
+    if final_lyrics.is_file():
+        return final_lyrics
     final = session_dir(sid) / "final.wav"
     if final.is_file():
         return final

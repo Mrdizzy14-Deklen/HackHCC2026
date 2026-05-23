@@ -1,5 +1,6 @@
 import { ObjectId, type WithId, type Document } from "mongodb";
 import { getDb, isDbConfigured } from "./mongodb";
+import { localGetSongs, localCreateSong } from "./local-store";
 import {
   PIECES,
   LEADERS,
@@ -49,14 +50,18 @@ function songFromDoc(d: WithId<Document>): Piece {
 }
 
 export async function getSongs(): Promise<Piece[]> {
-  if (!isDbConfigured()) return PIECES;
+  if (!isDbConfigured()) {
+    const local = await localGetSongs();
+    return [...local, ...PIECES];
+  }
   try {
     const db = await getDb();
     const docs = await db.collection("songs").find({}).sort({ likes: -1 }).toArray();
     return docs.map(songFromDoc);
   } catch {
     console.warn("[db] getSongs fell back to mock data — Atlas unreachable");
-    return PIECES;
+    const local = await localGetSongs();
+    return [...local, ...PIECES];
   }
 }
 
@@ -162,13 +167,15 @@ export interface NewSong {
  * composer exists as a conductor (so likes on it count toward the leaderboard).
  */
 export async function createSong(input: NewSong): Promise<{ id: string }> {
-  if (!isDbConfigured()) return { id: `local_${Date.now()}` };
+  if (!isDbConfigured()) {
+    return localCreateSong({ title: input.title, composer: input.composer, composerHandle: input.composerHandle, duration: input.duration || "—", instr: (input.instr as InstrumentKey) || "clef", audioId: input.audioId ?? null });
+  }
   let db;
   try {
     db = await getDb();
   } catch {
     console.warn("[db] createSong fell back — Atlas unreachable");
-    return { id: `local_${Date.now()}` };
+    return localCreateSong({ title: input.title, composer: input.composer, composerHandle: input.composerHandle, duration: input.duration || "—", instr: (input.instr as InstrumentKey) || "clef", audioId: input.audioId ?? null });
   }
 
   const now = new Date();
