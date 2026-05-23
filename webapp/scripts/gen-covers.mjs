@@ -75,21 +75,15 @@ function svg(s, i) {
   <rect width="${W}" height="${W}" fill="url(#bg)"/>
   <rect width="${W}" height="${W}" fill="url(#vig)"/>
 
-  <!-- vinyl record + tonearm (turntable motif) -->
+  <!-- vinyl record (turntable motif; tonearm + needle removed) -->
   <g opacity="0.92">${grooves(cx, cy, p.accent)}</g>
-  <g stroke="${p.ink}" stroke-opacity="0.5" fill="none" stroke-width="6" stroke-linecap="round">
-    <line x1="970" y1="120" x2="${cx}" y2="${cy}"/>
-  </g>
-  <circle cx="970" cy="120" r="16" fill="${p.ink}" fill-opacity="0.5"/>
-  <rect x="${cx - 18}" y="${cy - 6}" width="60" height="12" rx="4" fill="${p.ink}" fill-opacity="0.5" transform="rotate(38 ${cx} ${cy})"/>
 
   <!-- film grain -->
   <rect width="${W}" height="${W}" filter="url(#grain)" opacity="0.5"/>
 
   <!-- label / eyebrow -->
-  <circle cx="74" cy="86" r="6" fill="${p.accent}"/>
-  <text x="92" y="92" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="22" letter-spacing="6" fill="${p.ink}" fill-opacity="0.75">TREBLE TROUBLE RECORDINGS</text>
-  <text x="74" y="150" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="20" letter-spacing="5" fill="${p.ink}" fill-opacity="0.45">${s.cat} · SEASON XII</text>
+  <!-- eyebrow + season meta removed -->
+
 
   <!-- title -->
   <text x="70" y="560" font-family="Georgia, 'Times New Roman', serif" font-size="92" fill="${p.ink}">${esc(s.title)}</text>

@@ -32,8 +32,31 @@ export default function LoginPage() {
 
       <div className="login-stack">
         <div className="login-brand">
-          <div className="brand-mark" />
-          <div className="brand-name">TREBLE<em>·</em>TROUBLE</div>
+          <svg
+            className="brand-note"
+            viewBox="0 0 32 32"
+            width="34"
+            height="34"
+            fill="#000"
+            aria-hidden="true"
+          >
+            <ellipse cx="10" cy="24" rx="5.2" ry="3.6" transform="rotate(-22 10 24)" />
+            <rect x="13.6" y="5" width="2.4" height="19.5" />
+            <path d="M13.6 5 Q24 7.5 22 17 Q26 10 16 4 Z" />
+          </svg>
+          <div className="brand-name">TREBLE TROUBLE</div>
+          <svg
+            className="brand-note"
+            viewBox="0 0 32 32"
+            width="34"
+            height="34"
+            fill="#000"
+            aria-hidden="true"
+          >
+            <ellipse cx="10" cy="24" rx="5.2" ry="3.6" transform="rotate(-22 10 24)" />
+            <rect x="13.6" y="5" width="2.4" height="19.5" />
+            <path d="M13.6 5 Q24 7.5 22 17 Q26 10 16 4 Z" />
+          </svg>
         </div>
 
         <div className="login-card">

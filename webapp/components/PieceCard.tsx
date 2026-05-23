@@ -93,7 +93,6 @@ export default function PieceCard({ piece }: { piece: Piece }) {
       <div className="piece-body">
         <div className="piece-meta">
           <span>{piece.date}</span>
-          <span>{piece.duration}</span>
         </div>
         <div className="piece-title">{piece.title} <em>{piece.titleEm}</em></div>
         <div className="piece-composer">— {piece.composer}</div>

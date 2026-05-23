@@ -26,31 +26,24 @@ export default function LibraryPage() {
 
   const works = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return pieces;
-    return pieces.filter((p) =>
-      (p.title + " " + p.titleEm + " " + p.composer).toLowerCase().includes(q)
-    );
+    const filtered = q
+      ? pieces.filter((p) =>
+          (p.title + " " + p.titleEm + " " + p.composer).toLowerCase().includes(q)
+        )
+      : pieces;
+    // Rotate through /img1.jpeg … /img6.jpeg by original index for stable covers.
+    return filtered.map((p) => ({
+      ...p,
+      coverUrl: `/img${(pieces.indexOf(p) % 6) + 1}.jpeg`,
+    }));
   }, [search, pieces]);
 
   return (
     <div className="scene lib-scene fade-in" data-screen-label="Library">
       <TopBar />
 
-      <div className="page-head">
-        <div>
-          <div className="page-eyebrow"><span className="dot" />Your studio · last opened 14 minutes ago</div>
-          <h1 className="page-title">The <em>library.</em></h1>
-        </div>
-        <div className="head-stats">
-          <div className="head-stat"><div className="n">48</div><div className="l">Works</div></div>
-          <div className="head-stat"><div className="n">11.2h</div><div className="l">Composed</div></div>
-        </div>
-      </div>
-
       <div className="lib-controls">
-        <div className="lib-count">
-          <span className="lib-count-n">{works.length}</span> works in your studio
-        </div>
+        <h1 className="page-title">The <em>library.</em></h1>
         <div className="lib-right">
           <div className="search">
             {Ico.search()}

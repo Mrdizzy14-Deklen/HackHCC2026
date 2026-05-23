@@ -33,15 +33,7 @@ export default function LeaderboardPage() {
       <TopBar />
 
       <div className="page-head">
-        <div>
-          <div className="page-eyebrow"><span className="dot" />Season XII · 14 days remaining</div>
-          <h1 className="page-title">The <em>podium.</em></h1>
-        </div>
-        <div className="head-stats">
-          <div className="head-stat"><div className="n">{count.toLocaleString()}</div><div className="l">Conductors</div></div>
-          <div className="head-stat"><div className="n">#37</div><div className="l">Your rank</div></div>
-          <div className="head-stat"><div className="n">+128</div><div className="l">This week</div></div>
-        </div>
+        <h1 className="page-title">The <em>podium.</em></h1>
       </div>
 
       <div className="lb-wrap">

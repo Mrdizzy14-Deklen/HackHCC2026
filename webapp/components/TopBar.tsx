@@ -27,16 +27,38 @@ export default function TopBar() {
 
   return (
     <div className="topbar">
-      <div className="brand">
-        <div className="brand-mark" />
-        <div className="brand-name">TREBLE<em>·</em>TROUBLE</div>
-      </div>
+      <Link href="/login" className="brand" aria-label="Treble Trouble landing">
+        <svg
+          className="brand-note"
+          viewBox="0 0 32 32"
+          width="22"
+          height="22"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <ellipse cx="10" cy="24" rx="5.2" ry="3.6" transform="rotate(-22 10 24)" />
+          <rect x="13.6" y="5" width="2.4" height="19.5" />
+          <path d="M13.6 5 Q24 7.5 22 17 Q26 10 16 4 Z" />
+        </svg>
+        <div className="brand-name">TREBLE TROUBLE</div>
+        <svg
+          className="brand-note"
+          viewBox="0 0 32 32"
+          width="22"
+          height="22"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <ellipse cx="10" cy="24" rx="5.2" ry="3.6" transform="rotate(-22 10 24)" />
+          <rect x="13.6" y="5" width="2.4" height="19.5" />
+          <path d="M13.6 5 Q24 7.5 22 17 Q26 10 16 4 Z" />
+        </svg>
+      </Link>
       <div className="nav-tabs">
         <Link className={"nav-tab " + (pathname === "/library" ? "active" : "")} href="/library">Library</Link>
         <Link className={"nav-tab " + (pathname === "/leaderboard" ? "active" : "")} href="/leaderboard">Leaderboard</Link>
       </div>
       <div className="user-chip">
-        <span title={displayName}>{handle}</span>
         {user?.image ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img className="avatar avatar-img" src={user.image} alt={displayName} />
