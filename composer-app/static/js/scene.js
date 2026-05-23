@@ -109,7 +109,6 @@ function createStageWash(color, intensity, pos, targetPos) {
 }
 
 createStageWash(0xffa040, 90,  { x: 0,  y: 10, z: 6  }, { x: 0,  y: 0, z: -2 });
-createStageWash(0x4060ff, 50,  { x: 0,  y: 8,  z: -9 }, { x: 0,  y: 0, z: 0  });
 createStageWash(0xff4090, 35,  { x: -9, y: 6,  z: 0  }, { x: -3, y: 0, z: -2 });
 createStageWash(0x00c8ff, 35,  { x: 9,  y: 6,  z: 0  }, { x: 3,  y: 0, z: -2 });
 
@@ -632,51 +631,5 @@ function animate() {
 }
 animate();
 
-// --- CONDUCTOR HANDS ---
-const HAND_ROT = new THREE.Euler(
-  THREE.MathUtils.degToRad(-30),
-  THREE.MathUtils.degToRad(180),
-  THREE.MathUtils.degToRad(0)
-);
-
-function makeWhite(model) {
-  model.traverse(child => {
-    if (child.isMesh) {
-      child.material = new THREE.MeshStandardMaterial({
-        color: 0xffffff, roughness: 0.3, metalness: 0.0,
-      });
-    }
-  });
-}
-
-function mirrorX(model) {
-  model.traverse(child => {
-    if (child.isMesh && child.geometry) {
-      const geo = child.geometry.clone();
-      const pos = geo.attributes.position;
-      for (let i = 0; i < pos.count; i++) pos.setX(i, -pos.getX(i));
-      pos.needsUpdate = true;
-      if (geo.attributes.normal) {
-        const norm = geo.attributes.normal;
-        for (let i = 0; i < norm.count; i++) norm.setX(i, -norm.getX(i));
-        norm.needsUpdate = true;
-      }
-      geo.computeBoundingBox();
-      geo.computeBoundingSphere();
-      child.geometry = geo;
-    }
-  });
-}
-
-loader.load("/rigged_hand/scene.gltf", (gltf) => {
-  const leftHand = gltf.scene.clone(true);
-  makeWhite(leftHand);
-  placeInstrument(leftHand, -2.0, 0.1, 2.5, 0, HAND_ROT, 1.4);
-
-  const rightHand = gltf.scene.clone(true);
-  makeWhite(rightHand);
-  mirrorX(rightHand);
-  placeInstrument(rightHand, 2.0, 0.1, 2.5, 0, HAND_ROT, 1.4);
-}, undefined, (err) => console.error("hand load failed", err));
 
 fetch("/api/ping").catch((err) => console.error("ping failed", err));
