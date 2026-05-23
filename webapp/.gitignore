@@ -243,3 +243,4 @@ next-env.d.ts
 # data/db helpers live in lib/. Force-track the TypeScript ones.
 !/lib/
 !/lib/*.ts
+local-songs.json

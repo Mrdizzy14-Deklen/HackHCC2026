@@ -33,15 +33,20 @@ declare global {
   var _maestroMongo: Promise<MongoClient> | undefined;
 }
 
+const MONGO_OPTS = {
+  serverSelectionTimeoutMS: 2000,  // fail fast instead of waiting 30s
+  connectTimeoutMS: 2000,
+};
+
 function getClientPromise(): Promise<MongoClient> {
   if (!uri) throw new Error("MONGODB_URI is not set");
   if (process.env.NODE_ENV === "development") {
     if (!global._maestroMongo) {
-      global._maestroMongo = new MongoClient(uri).connect();
+      global._maestroMongo = new MongoClient(uri, MONGO_OPTS).connect();
     }
     return global._maestroMongo;
   }
-  if (!clientPromise) clientPromise = new MongoClient(uri).connect();
+  if (!clientPromise) clientPromise = new MongoClient(uri, MONGO_OPTS).connect();
   return clientPromise;
 }
 
