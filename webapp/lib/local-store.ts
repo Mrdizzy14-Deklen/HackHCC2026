@@ -7,7 +7,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { Piece } from "./data";
 
-const STORE_PATH = path.join(process.cwd(), ".next", "local-songs.json");
+const STORE_PATH = path.join(process.cwd(), "local-songs.json");
 
 async function readStore(): Promise<Piece[]> {
   try {

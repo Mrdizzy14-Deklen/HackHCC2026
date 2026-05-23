@@ -12,6 +12,25 @@ export async function GET(
 ) {
   const { id } = await params;
 
+  // Static sample audio: ids starting with "static_" are served from public/audio/
+  if (id.startsWith("static_")) {
+    const fileName = id.slice(7);
+    const filePath = path.join(process.cwd(), "public", "audio", fileName);
+    try {
+      const data = await fs.readFile(filePath);
+      return new Response(data, {
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Content-Length": String(data.length),
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "Accept-Ranges": "bytes",
+        },
+      });
+    } catch {
+      return new Response("not found", { status: 404 });
+    }
+  }
+
   // Local fallback: ids starting with "local_" were saved to public/uploads/
   if (id.startsWith("local_")) {
     const localName = id.slice(6);
