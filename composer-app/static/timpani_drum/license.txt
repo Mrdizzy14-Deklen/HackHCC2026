@@ -1,0 +1,11 @@
+Model Information:
+* title:	Timpani Drum
+* source:	https://sketchfab.com/3d-models/timpani-drum-9cf701a0db76411294266c5a3665458b
+* author:	taw7904 (https://sketchfab.com/taw7904)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Timpani Drum" (https://sketchfab.com/3d-models/timpani-drum-9cf701a0db76411294266c5a3665458b) by taw7904 (https://sketchfab.com/taw7904) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

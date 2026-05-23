@@ -17,7 +17,10 @@ def main() -> None:
     thread = threading.Thread(target=run_server, args=(server,), daemon=True)
     thread.start()
 
-    window = webview.create_window("Composer", "http://localhost:5000")
+    try:
+        window = webview.create_window("Composer", "http://localhost:5000", maximized=True)
+    except TypeError:
+        window = webview.create_window("Composer", "http://localhost:5000")
 
     def on_closing() -> None:
         server.should_exit = True

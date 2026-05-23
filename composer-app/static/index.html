@@ -11,26 +11,40 @@
     <link rel="stylesheet" href="/static/css/panel.css" />
   </head>
   <body>
-    <aside class="panel" id="panel">
+    <!-- Curtains: start closed, open via gesture (class added by scene.js) -->
+    <img class="curtain left"  src="/static/pngegg.png" alt="">
+    <img class="curtain right" src="/static/pngegg.png" alt="">
+
+    <!-- Camera feed (hidden source for MediaPipe) -->
+    <video id="gesture-cam" playsinline muted style="display:none"></video>
+
+    <!-- Camera preview overlay — top-left corner -->
+    <div id="cam-preview">
+      <video id="gesture-cam-preview" playsinline muted></video>
+      <div id="gesture-badge">—</div>
+      <div id="voice-prompt" class="hidden">🎙 Say instrument name…</div>
+    </div>
+
+    <!-- Gesture hint overlay shown before curtains open — click or press Space to skip -->
+    <div id="gesture-hint" title="Click to open">
+      <div class="hint-icon">🤲</div>
+      <p>Spread both hands apart to begin</p>
+      <p class="hint-skip">or click here / press Space</p>
+    </div>
+
+    <aside class="panel collapsed" id="panel">
       <button class="panel-handle" id="panel-toggle" aria-label="Toggle panel">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"></polyline></svg>
       </button>
       <div class="header">
-        <h1>Humming</h1>
-        <p>Trumpet — stage 3 of 4</p>
+        <h1 id="panel-title">Select Instrument</h1>
+        <p id="panel-sub">Point at an instrument on stage</p>
       </div>
 
       <div>
         <div class="label">Section</div>
-        <div class="sections">
-          <button class="tab active">Trumpet</button>
-          <button class="tab">Fr. horn</button>
-          <button class="tab">Trombone</button>
-          <button class="tab">Oboe</button>
-          <button class="tab">Soprano</button>
-          <button class="tab">Piano</button>
-          <button class="tab">Flute</button>
-          <button class="tab add" id="add-instrument" aria-label="Add instrument" title="Add instrument">+</button>
+        <div class="sections" id="sections">
+          <!-- Populated by panel.js after session start -->
         </div>
       </div>
 
@@ -38,20 +52,20 @@
         <button class="record-btn" id="rec"><span class="dot"></span></button>
         <div class="pitch">
           <div>
-            <span class="pitch-note" id="note">A♭4</span><span class="pitch-cents" id="cents">+3¢</span>
+            <span class="pitch-note" id="note">—</span>
           </div>
-          <div class="pitch-sub" id="sub">Ready to record</div>
+          <div class="pitch-sub" id="sub">Point at an instrument to select it</div>
         </div>
       </div>
 
       <div class="notes-wrap">
-        <div class="label">14 notes detected</div>
+        <div class="label" id="notes-label">No notes yet</div>
         <div class="notes" id="notes"></div>
       </div>
 
       <div class="footer">
-        <button class="btn">Clear</button>
-        <button class="btn primary">Harmonize</button>
+        <button class="btn" id="btn-clear">Clear</button>
+        <button class="btn primary" id="btn-harmonize">Harmonize ✦</button>
       </div>
     </aside>
 
@@ -63,7 +77,14 @@
         }
       }
     </script>
-    <script type="module" src="/static/js/scene.js"></script>
-    <script src="/static/js/panel.js" defer></script>
+    <!-- Transparent hand-cursor overlay — drawn by cursor.js, z-index 8 -->
+    <canvas id="gesture-cursor"></canvas>
+
+    <script type="module" src="/static/js/scene.js?v=4"></script>
+    <script type="module" src="/static/js/panel.js?v=4"></script>
+    <script type="module">
+      import { initCursor } from "/static/js/cursor.js?v=4";
+      initCursor();
+    </script>
   </body>
 </html>

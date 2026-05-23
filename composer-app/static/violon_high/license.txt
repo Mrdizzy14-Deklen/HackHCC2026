@@ -1,0 +1,11 @@
+Model Information:
+* title:	violon_high
+* source:	https://sketchfab.com/3d-models/violon-high-271800d72414443bac04a6f60c5eb738
+* author:	Dew12522 (https://sketchfab.com/Dew12522)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "violon_high" (https://sketchfab.com/3d-models/violon-high-271800d72414443bac04a6f60c5eb738) by Dew12522 (https://sketchfab.com/Dew12522) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
