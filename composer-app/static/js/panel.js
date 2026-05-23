@@ -102,6 +102,11 @@ async function boot() {
     }
   }, 800);
 
+  // ── Toast container ──────────────────────────────────────────────────
+  const $toast = document.createElement("div");
+  $toast.id = "track-toast";
+  document.body.appendChild($toast);
+
   // ── Panel UI ──────────────────────────────────────────────────────────
   buildTabs();
   $rec.addEventListener("click", toggleRecording);
@@ -204,6 +209,14 @@ async function startRecording(trackId) {
   }, 500);
 }
 
+function showToast(msg) {
+  const el = document.getElementById("track-toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 2000);
+}
+
 function finishRecording(trackId, notes, error) {
   isRecording = false;
   $rec.classList.remove("on");
@@ -217,6 +230,9 @@ function finishRecording(trackId, notes, error) {
   $noteSub.textContent = `${notes.length} note${notes.length !== 1 ? "s" : ""} detected`;
   $note.textContent    = notes.length ? midiToName(notes[0].midi) : "—";
   renderNotes(notes);
+
+  const t = tracks.find(x => x.id === trackId);
+  showToast(`${t?.name ?? trackId} recorded — ${notes.length} notes`);
 
   $sections.querySelector(`[data-track-id="${trackId}"]`)?.classList.add("done");
 

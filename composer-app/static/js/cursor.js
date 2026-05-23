@@ -30,10 +30,11 @@ const GESTURE_LABELS = {
   none:         "",
 };
 
-let _canvas = null;
-let _ctx    = null;
-let _dw     = 0;
-let _dh     = 0;
+let _canvas  = null;
+let _ctx     = null;
+let _dw      = 0;
+let _dh      = 0;
+let _burstTs = 0;
 
 // Dwell tracking (mirrors gestures.js logic)
 let _dwellCell  = null;
@@ -104,6 +105,15 @@ function _drawHand(lm, gesture) {
     }
   }
 
+  // ── Open-palm glow at index fingertip ────────────────────────────────────
+  if (gesture === "open-palm") {
+    const ip = pts[8];
+    _ctx.beginPath();
+    _ctx.arc(ip.x, ip.y, 40, 0, Math.PI * 2);
+    _ctx.fillStyle = "rgba(255,255,255,0.08)";
+    _ctx.fill();
+  }
+
   // ── Dwell ring at index fingertip ─────────────────────────────────────────
   if (gesture === "point") {
     const ip  = pts[8];
@@ -121,12 +131,47 @@ function _drawHand(lm, gesture) {
     const elapsed  = now - _dwellStart;
     const progress = Math.min(elapsed / DWELL_MS, 1);
 
+    if (progress >= 1) {
+      _burstTs = performance.now();
+    }
+
     if (progress > 0.02) {
+      // Color shifts green → amber → white as ring fills
+      let r, g, b;
+      if (progress <= 0.4) {
+        // green: rgba(100,255,150)
+        r = 100; g = 255; b = 150;
+      } else if (progress <= 0.8) {
+        // lerp green → amber: rgba(255,200,80)
+        const t = (progress - 0.4) / 0.4;
+        r = Math.round(100 + t * (255 - 100));
+        g = Math.round(255 + t * (200 - 255));
+        b = Math.round(150 + t * (80  - 150));
+      } else {
+        // lerp amber → white: rgba(255,255,255)
+        const t = (progress - 0.8) / 0.2;
+        r = 255;
+        g = Math.round(200 + t * (255 - 200));
+        b = Math.round(80  + t * (255 - 80));
+      }
+      const alpha = 0.5 + progress * 0.5;
+
       _ctx.beginPath();
       _ctx.arc(ip.x, ip.y, 18, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
-      _ctx.strokeStyle = `rgba(100,255,150,${0.5 + progress * 0.5})`;
+      _ctx.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
       _ctx.lineWidth   = 3;
       _ctx.lineCap     = "round";
+      _ctx.stroke();
+    }
+
+    // Burst ring after dwell completes
+    const burstAge = performance.now() - _burstTs;
+    if (_burstTs && burstAge < 400) {
+      const burstP = burstAge / 400;
+      _ctx.beginPath();
+      _ctx.arc(ip.x, ip.y, 18 + burstP * 20, 0, Math.PI * 2);
+      _ctx.strokeStyle = `rgba(255,255,255,${(1 - burstP) * 0.7})`;
+      _ctx.lineWidth = 2;
       _ctx.stroke();
     }
   } else {

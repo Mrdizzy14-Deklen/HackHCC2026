@@ -2,9 +2,9 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x111111);
+scene.background = new THREE.Color(0x09080c);  // deep cinematic dark
 
-scene.fog = new THREE.Fog(0x111111, 5, 25);
+scene.fog = new THREE.FogExp2(0x09080c, 0.045);
 
 const camera = new THREE.PerspectiveCamera(
   45,
@@ -70,14 +70,17 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+scene.add(new THREE.AmbientLight(0xfff5e0, 0.7));
 
-const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
-keyLight.position.set(3, 5, 4);
+const keyLight = new THREE.DirectionalLight(0xfff0c8, 2.5);
+keyLight.position.set(3, 6, 4);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.width  = 2048;
+keyLight.shadow.mapSize.height = 2048;
 scene.add(keyLight);
 
-const fillLight = new THREE.DirectionalLight(0xffffff, 0.1);
-fillLight.position.set(-3, 2, -2);
+const fillLight = new THREE.DirectionalLight(0x8090ff, 0.25);
+fillLight.position.set(-4, 3, -3);
 scene.add(fillLight);
 
 // The 4 main washes DO cast shadows
@@ -105,10 +108,27 @@ function createStageWash(color, intensity, pos, targetPos) {
   return light;
 }
 
-createStageWash(0xffe5b4, 40, { x: 0, y: 8, z: 5 }, { x: 0, y: 0, z: -2 });
-createStageWash(0x87ceeb, 25, { x: 0, y: 8, z: -8 }, { x: 0, y: 0, z: 0 });
-createStageWash(0xffb6c1, 15, { x: -8, y: 5, z: 0 }, { x: -3, y: 0, z: -2 });
-createStageWash(0x00ffff, 15, { x: 8, y: 5, z: 0 }, { x: 3, y: 0, z: -2 });
+createStageWash(0xffa040, 90,  { x: 0,  y: 10, z: 6  }, { x: 0,  y: 0, z: -2 });
+createStageWash(0x4060ff, 50,  { x: 0,  y: 8,  z: -9 }, { x: 0,  y: 0, z: 0  });
+createStageWash(0xff4090, 35,  { x: -9, y: 6,  z: 0  }, { x: -3, y: 0, z: -2 });
+createStageWash(0x00c8ff, 35,  { x: 9,  y: 6,  z: 0  }, { x: 3,  y: 0, z: -2 });
+
+// Warm footlights — low-angle from pit edge for dramatic uplighting
+function createFootlight(x) {
+  const fl = new THREE.SpotLight(0xffd580, 60);
+  fl.position.set(x, 0.4, 3.5);
+  fl.angle   = Math.PI / 5;
+  fl.penumbra = 0.6;
+  fl.decay   = 1.8;
+  fl.distance = 14;
+  const ft = new THREE.Object3D();
+  ft.position.set(x * 0.4, 0, -1);
+  scene.add(ft);
+  fl.target = ft;
+  scene.add(fl);
+}
+createFootlight(-3);
+createFootlight(3);
 
 const VIEWER = new THREE.Vector3(0, 1, 4);
 
@@ -177,6 +197,38 @@ function buildOrchestraRisers() {
 
 buildOrchestraRisers();
 
+// Reflective stage floor — shows colored wash reflections
+(function addFloor() {
+  const geo = new THREE.PlaneGeometry(14, 14);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x0c0a0f, roughness: 0.08, metalness: 0.45 });
+  const floor = new THREE.Mesh(geo, mat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(0, -0.05, -3);
+  floor.receiveShadow = true;
+  scene.add(floor);
+})();
+
+// ── Dynamic lights ────────────────────────────────────────────────────────
+let _curtainsOpen   = false;
+const _revealLights = [];
+
+const _hoverLight = new THREE.PointLight(0xff9040, 0, 4);
+_hoverLight.decay = 2;
+scene.add(_hoverLight);
+
+const _scanLight = new THREE.SpotLight(0xc8aaff, 80);
+_scanLight.position.set(0, 9, 2);
+_scanLight.angle    = Math.PI / 14;
+_scanLight.penumbra = 0.4;
+_scanLight.decay    = 1.8;
+_scanLight.distance = 18;
+const _scanTarget = new THREE.Object3D();
+_scanTarget.position.set(0, 0, -3);
+scene.add(_scanTarget);
+_scanLight.target = _scanTarget;
+scene.add(_scanLight);
+let _scanPhase = 0;
+
 // --- Pre-spawn logic for performance ---
 function createInstrumentSpotlight(x, y, z) {
   const instrumentY = getTierY(z) + (PLATFORM_THICKNESS / 2) + y;
@@ -242,7 +294,8 @@ function placeInstrument(
 
   if (spotLight) {
     spotLight.target = outer;
-    spotLight.intensity = 200; // Super bright
+    spotLight.intensity = _curtainsOpen ? 200 : 0;
+    _revealLights.push(spotLight);
   }
 
   instruments.push({ outer, inner, baseYaw, targetYaw: baseYaw, currentYaw: baseYaw, kind });
@@ -266,8 +319,7 @@ function addViolin() {
 }
 loader.load("/static/violon_high/scene.gltf", (gltf) => {
   violinCache.scene = gltf.scene;
-  addViolin(); // auto-place on load
-  while (violinCache.pending > 0 && violinCache.count < VIOLIN_SLOTS.length) { violinCache.pending--; addViolin(); }
+  while (violinCache.count < VIOLIN_SLOTS.length) addViolin();
 }, undefined, (err) => console.error("violin load failed", err));
 
 
@@ -285,8 +337,7 @@ function addFlute() {
 }
 loader.load("/static/basic_flute/scene.gltf", (gltf) => {
   fluteCache.scene = gltf.scene;
-  addFlute(); // auto-place on load
-  while (fluteCache.pending > 0 && fluteCache.count < FLUTE_SLOTS.length) { fluteCache.pending--; addFlute(); }
+  while (fluteCache.count < FLUTE_SLOTS.length) addFlute();
 }, undefined, (err) => console.error("flute load failed", err));
 
 
@@ -340,8 +391,7 @@ function addTrumpet() {
 }
 loader.load("/static/trumpet/scene.gltf", (gltf) => {
   trumpetCache.scene = gltf.scene;
-  addTrumpet(); // auto-place on load
-  while (trumpetCache.pending > 0 && trumpetCache.count < TRUMPET_SLOTS.length) { trumpetCache.pending--; addTrumpet(); }
+  while (trumpetCache.count < TRUMPET_SLOTS.length) addTrumpet();
 }, undefined, (err) => console.error("trumpet load failed", err));
 
 
@@ -378,8 +428,7 @@ function addDrum() {
 }
 loader.load("/static/timpani_drum/scene.gltf", (gltf) => {
   drumCache.scene = gltf.scene;
-  addDrum(); // auto-place on load
-  while (drumCache.pending > 0 && drumCache.count < DRUM_SLOTS.length) { drumCache.pending--; addDrum(); }
+  while (drumCache.count < DRUM_SLOTS.length) addDrum();
 }, undefined, (err) => console.error("drum load failed", err));
 
 // --- PIANO (Tier 3 Center) ---
@@ -460,12 +509,26 @@ window.addEventListener("gesture:dwell-select", () => {
 
 // Shared helper — opens curtains from any source
 function openCurtains() {
+  if (_curtainsOpen) return;
+  _curtainsOpen = true;
   document.querySelectorAll(".curtain").forEach((c) => c.classList.add("open"));
   const hint = document.getElementById("gesture-hint");
   if (hint) {
     hint.classList.add("hidden");
     setTimeout(() => hint.remove(), 1500);
   }
+  // Staggered spotlight reveal — one instrument light every 120 ms, starting 400 ms after open
+  _revealLights.forEach((light, i) => {
+    setTimeout(() => {
+      let t = 0;
+      const step = () => {
+        t = Math.min(t + 0.05, 1);
+        light.intensity = t * 200;
+        if (t < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }, 400 + i * 120);
+  });
 }
 
 // Gesture: curtains sweep open
@@ -494,6 +557,24 @@ function animate() {
     inst.currentYaw += (inst.targetYaw - inst.currentYaw) * 0.06;
     inst.inner.rotation.y = inst.currentYaw;
   }
+
+  // Hover glow follows the instrument under the finger
+  if (_gestureHovered) {
+    const wp = new THREE.Vector3();
+    _gestureHovered.outer.getWorldPosition(wp);
+    _hoverLight.position.lerp(new THREE.Vector3(wp.x, wp.y + 1.2, wp.z + 0.5), 0.1);
+    _hoverLight.intensity += (3.5 - _hoverLight.intensity) * 0.08;
+  } else {
+    _hoverLight.intensity *= 0.9;
+  }
+
+  // Scan light slowly sweeps the stage after curtains open
+  if (_curtainsOpen) {
+    _scanPhase += 0.003;
+    _scanTarget.position.x = Math.sin(_scanPhase) * 4.5;
+    _scanTarget.position.z = -3 + Math.cos(_scanPhase * 0.7) * 1.5;
+  }
+
   renderer.render(scene, camera);
 }
 animate();
