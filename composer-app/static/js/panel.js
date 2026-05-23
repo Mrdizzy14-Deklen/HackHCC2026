@@ -337,6 +337,15 @@ function onRenderDone() {
   btn.style.marginTop = "6px";
   btn.addEventListener("click", launchConduct);
   document.querySelector(".footer").appendChild(btn);
+
+  // Hands the finished song off to the web app to be named and published to
+  // the leaderboard (mixes the rendered stems if there's no conduct export).
+  const pub = document.createElement("button");
+  pub.className   = "btn";
+  pub.textContent = "Save & publish ↗";
+  pub.style.marginTop = "6px";
+  pub.addEventListener("click", publishSong);
+  document.querySelector(".footer").appendChild(pub);
 }
 
 // ---------------------------------------------------------------------------
@@ -987,6 +996,24 @@ function _exportFinal() {
   document.querySelector(".footer").innerHTML = `
     <button class="btn primary" onclick="location.reload()">Start Over 🔄</button>
   `;
+}
+
+// Upload the exported mix and redirect to the web app's publish page.
+async function publishSong() {
+  showToast("Saving your performance…");
+  try {
+    const res = await fetch("/api/publish", { method: "POST" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.detail || "Render your song first");
+      return;
+    }
+    const data = await res.json();
+    window.location.href = data.publish_url;   // → log in, name it, publish
+  } catch (err) {
+    console.warn("[panel] publish failed:", err);
+    showToast("Publish failed — is the web app running on :3000?");
+  }
 }
 
 // ---------------------------------------------------------------------------
